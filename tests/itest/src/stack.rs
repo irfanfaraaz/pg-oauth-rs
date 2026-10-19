@@ -35,34 +35,61 @@ pub fn start() {
 
 /// Run one statement as the superuser over a password connection.
 pub fn admin_sql(sql: &str) -> Option<String> {
+    try_admin_sql(sql).unwrap_or_else(|e| panic!("{sql}: {e}"))
+}
+
+/// Like `admin_sql`, but a failed statement comes back as the error text.
+pub fn try_admin_sql(sql: &str) -> Result<Option<String>, String> {
     let conn = libpq::connect(ADMIN_CONNINFO).expect("superuser password login");
-    conn.query(sql).unwrap_or_else(|e| panic!("{sql}: {e}"))
+    conn.query(sql)
+}
+
+/// Run the statements in order on one superuser connection; the first error ends the run.
+/// One statement per call: ALTER SYSTEM refuses to run inside a multi-statement string.
+pub fn try_admin_sql_in_one_session(sqls: &[&str]) -> Result<(), String> {
+    let conn = libpq::connect(ADMIN_CONNINFO).expect("superuser password login");
+    sqls.iter().try_for_each(|sql| conn.query(sql).map(drop))
+}
+
+/// Reload the configuration.
+fn reload() {
+    admin_sql("SELECT pg_reload_conf()");
+    // The postmaster applies the reload asynchronously; give it a moment before the next login.
+    sleep(Duration::from_millis(500));
 }
 
 /// `ALTER SYSTEM SET` plus reload. Names and values come from the tests, never from outside.
 pub fn set_guc(name: &str, value: &str) {
     // Separate statements: ALTER SYSTEM refuses to run inside a (multi-statement) transaction.
     admin_sql(&format!("ALTER SYSTEM SET {name} = '{value}'"));
-    admin_sql("SELECT pg_reload_conf()");
-    // The postmaster applies the reload asynchronously; give it a moment before the next login.
-    sleep(Duration::from_millis(500));
+    reload();
 }
 
 /// Undoes `guc` on drop.
 pub struct GucGuard {
     name: &'static str,
-    old: String,
+    /// `None`: the admin session did not know the setting (a module setting, not preloaded).
+    old: Option<String>,
 }
 
 impl Drop for GucGuard {
     fn drop(&mut self) {
-        set_guc(self.name, &self.old);
+        match &self.old {
+            Some(old) => set_guc(self.name, old),
+            None => {
+                admin_sql(&format!("ALTER SYSTEM RESET {}", self.name));
+                reload();
+            }
+        }
     }
 }
 
 /// Set a setting until the guard is dropped.
 pub fn guc(name: &'static str, value: &str) -> GucGuard {
-    let old = admin_sql(&format!("SELECT current_setting('{name}')")).expect("setting exists");
+    // `missing_ok`: libpq returns NULL as "", so ask for NULL-ness apart from the value.
+    let unset = admin_sql(&format!("SELECT current_setting('{name}', true) IS NULL"));
+    let old = (unset.as_deref() != Some("t"))
+        .then(|| admin_sql(&format!("SELECT current_setting('{name}')")).expect("setting exists"));
     set_guc(name, value);
     GucGuard { name, old }
 }

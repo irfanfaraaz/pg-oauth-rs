@@ -7,6 +7,7 @@ use jsonwebtoken::jwk::JwkSet;
 use pgrx::pg_sys;
 
 use crate::cache::{self, Plan, Snapshot};
+use crate::provider;
 use crate::settings::{self, Settings};
 use crate::token::{self, CheckConfig};
 use crate::{fetch, log, pg_oauth_rs_hba_issuer};
@@ -33,16 +34,28 @@ const CLAIM_TRIES: usize = 3;
 
 /// Decide one login. Logs every non-Allow outcome exactly once; never logs the token.
 pub fn decide(token: &str, _role: &str) -> Decision {
-    let set = settings::current();
-    if set.audience.is_empty() || set.jwks_uri.is_empty() {
+    const BOTH_SET: &str = "pg_oauth_rs.audience and pg_oauth_rs.jwks_uri must both be set";
+    let mut set = settings::current();
+    if set.provider_unknown {
         return error(
             "not configured",
-            "pg_oauth_rs.audience and pg_oauth_rs.jwks_uri must both be set",
+            "pg_oauth_rs.provider has an unknown value; use generic, entra, okta or keycloak",
         );
     }
+    if set.audience.is_empty() {
+        return error("not configured", BOTH_SET);
+    }
+    // The HBA line is only valid during authentication: checks that can fail without it go first.
     let Some(issuer) = hba_issuer() else {
         return error("internal error", "no issuer on the matched pg_hba.conf line");
     };
+    let tenant = match apply_preset(&mut set, &issuer) {
+        Ok(tenant) => tenant,
+        Err(detail) => return error("not configured", &detail),
+    };
+    if set.jwks_uri.is_empty() {
+        return error("not configured", BOTH_SET);
+    }
 
     let kid = match token::header_kid(token) {
         Ok(kid) => kid,
@@ -64,6 +77,7 @@ pub fn decide(token: &str, _role: &str) -> Decision {
         audience: &set.audience,
         identity_claim: &set.identity_claim,
         leeway_secs: set.leeway.as_secs(),
+        entra_tenant: tenant.as_deref(),
     };
     match token::verify(token, &keys, &cfg) {
         Ok(authn_id) => Decision::Allow { authn_id },
@@ -74,6 +88,21 @@ pub fn decide(token: &str, _role: &str) -> Decision {
             Decision::Deny { authn_id }
         }
     }
+}
+
+/// Run `provider::resolve` and fill the settings left empty. Returns the Entra tenant.
+/// `Err` is the "not configured" log detail.
+fn apply_preset(set: &mut Settings, issuer: &str) -> Result<Option<String>, String> {
+    let resolved = provider::resolve(set.provider, issuer)?;
+    if set.jwks_uri.is_empty() {
+        if let Some(uri) = resolved.jwks_uri {
+            set.jwks_uri = uri;
+        }
+    }
+    if set.identity_claim.is_empty() {
+        resolved.identity_claim.clone_into(&mut set.identity_claim);
+    }
+    Ok(resolved.entra_tenant)
 }
 
 /// Log a "could not decide" reason and answer `Error`.
@@ -223,6 +252,8 @@ mod tests {
     use pgrx::prelude::*;
 
     use super::{decide, Decision};
+    use crate::provider::Provider;
+    use crate::settings;
 
     #[pg_test]
     fn module_init_returns_magic() {
@@ -234,8 +265,17 @@ mod tests {
     }
 
     #[pg_test]
+    fn provider_defaults_to_generic() {
+        let shown = Spi::get_one::<String>("SHOW pg_oauth_rs.provider").unwrap();
+        assert_eq!(shown.as_deref(), Some("generic"));
+        let set = settings::current();
+        assert_eq!(set.provider, Provider::Generic);
+        assert_eq!(set.identity_claim, "");
+    }
+
+    #[pg_test]
     fn decide_without_config_is_error() {
-        // audience and jwks_uri are empty by default, so this cannot be decided.
+        // audience is empty by default: Error, returned before the HBA line is read.
         assert!(matches!(decide("a.b.c", "alice"), Decision::Error));
     }
 
@@ -250,5 +290,72 @@ mod tests {
         let after = crate::cache::read().unwrap();
         assert_eq!(after.attempt_uri, uri);
         assert!(crate::cache::claim_attempt(uri, &after, now).unwrap());
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
+mod preset_tests {
+    use std::time::Duration;
+
+    use super::apply_preset;
+    use crate::provider::Provider;
+    use crate::settings::Settings;
+
+    const T: &str = "6f1c2a3b-4d5e-4f60-8a9b-0c1d2e3f4a5b";
+
+    fn entra_issuer() -> String {
+        format!("https://login.microsoftonline.com/{T}/v2.0")
+    }
+
+    fn set(provider: Provider, jwks_uri: &str, identity_claim: &str) -> Settings {
+        Settings {
+            audience: "db".into(),
+            jwks_uri: jwks_uri.into(),
+            identity_claim: identity_claim.into(),
+            leeway: Duration::from_secs(60),
+            jwks_timeout: Duration::from_secs(5),
+            refetch_interval: Duration::from_secs(60),
+            max_age: Duration::from_secs(3600),
+            max_stale: Duration::from_secs(86400),
+            provider,
+            provider_unknown: false,
+        }
+    }
+
+    #[test]
+    fn explicit_identity_claim_wins() {
+        let mut s = set(Provider::Entra, "", "sub");
+        apply_preset(&mut s, &entra_issuer()).unwrap();
+        assert_eq!(s.identity_claim, "sub");
+    }
+
+    #[test]
+    fn empty_identity_claim_takes_preset() {
+        let mut s = set(Provider::Entra, "", "");
+        apply_preset(&mut s, &entra_issuer()).unwrap();
+        assert_eq!(s.identity_claim, "oid");
+    }
+
+    #[test]
+    fn explicit_jwks_uri_wins_and_tenant_still_checked() {
+        let mut s = set(Provider::Entra, "https://keys.example/jwks", "");
+        let tenant = apply_preset(&mut s, &entra_issuer()).unwrap();
+        assert_eq!(s.jwks_uri, "https://keys.example/jwks");
+        assert_eq!(tenant.as_deref(), Some(T));
+    }
+
+    #[test]
+    fn explicit_jwks_uri_does_not_skip_shape_check() {
+        let mut s = set(Provider::Okta, "https://keys.example/jwks", "");
+        assert!(apply_preset(&mut s, "https://acme.okta.com").is_err());
+    }
+
+    #[test]
+    fn generic_keeps_everything() {
+        let mut s = set(Provider::Generic, "", "");
+        assert_eq!(apply_preset(&mut s, "https://idp.example").unwrap(), None);
+        assert_eq!(s.jwks_uri, "");
+        assert_eq!(s.identity_claim, "sub");
     }
 }

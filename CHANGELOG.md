@@ -7,8 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-19
+
+### Added
+
+- `pg_oauth_rs.provider` presets for Entra ID, Okta and Keycloak (JWKS URL and identity claim from the
+  issuer; Entra tenant check). An unknown `pg_oauth_rs.provider` value refuses every login.
+
 ### Changed
 
+- `pg_oauth_rs.identity_claim` now defaults to empty, meaning the provider's claim (`sub` for generic,
+  so no behaviour change).
 - License: Apache-2.0 only (0.1.0 was released under MIT OR Apache-2.0).
 
 ## [0.1.0] - 2026-10-19
@@ -28,5 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release workflow: a version tag publishes Linux tarballs (amd64, arm64), `SHA256SUMS`, and the
   Docker image `ghcr.io/irfanfaraaz/pg-oauth-rs`, each with a signed build-provenance attestation.
 
-[Unreleased]: https://github.com/irfanfaraaz/pg-oauth-rs/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/irfanfaraaz/pg-oauth-rs/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/irfanfaraaz/pg-oauth-rs/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/irfanfaraaz/pg-oauth-rs/releases/tag/v0.1.0

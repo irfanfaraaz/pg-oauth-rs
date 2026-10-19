@@ -10,6 +10,7 @@ use super::{header_kid, verify, CheckConfig, Refusal};
 
 const ISS: &str = "https://idp.example.com/realms/demo";
 const AUD: &str = "postgres";
+const TENANT: &str = "6f1c2a3b-4d5e-4f60-8a9b-0c1d2e3f4a5b";
 const RSA_PRIVATE_PKCS1: &[u8] = include_bytes!("testdata/rsa_private_pkcs1.der");
 const RSA_PUBLIC_SPKI: &[u8] = include_bytes!("testdata/rsa_public_spki.der");
 const EC_PRIVATE_PKCS8: &[u8] = include_bytes!("testdata/ec_private_pkcs8.der");
@@ -32,7 +33,17 @@ fn default_jwks() -> JwkSet {
 }
 
 fn cfg() -> CheckConfig<'static> {
-    CheckConfig { issuer: ISS, audience: AUD, identity_claim: "sub", leeway_secs: 60 }
+    CheckConfig {
+        issuer: ISS,
+        audience: AUD,
+        identity_claim: "sub",
+        leeway_secs: 60,
+        entra_tenant: None,
+    }
+}
+
+fn entra_cfg() -> CheckConfig<'static> {
+    CheckConfig { entra_tenant: Some(TENANT), ..cfg() }
 }
 
 fn now() -> u64 {
@@ -338,4 +349,68 @@ fn rejects_malformed_inputs() {
         );
         assert!(start.elapsed() < Duration::from_millis(50), "slow on {} bytes", t.len());
     }
+}
+
+const TID_MISSING: &str = "tid missing (add profile to the pg_hba.conf scope)";
+const V1_HINT: &str =
+    "issuer mismatch (v1 token: set requestedAccessTokenVersion to 2 in the app manifest)";
+
+fn v1_claims() -> Value {
+    with(
+        with(claims(), "iss", json!(format!("https://sts.windows.net/{TENANT}/"))),
+        "tid",
+        json!(TENANT),
+    )
+}
+
+#[test]
+fn entra_accepts_matching_tid() {
+    let t = rs256(&with(claims(), "tid", json!(TENANT)));
+    assert_eq!(verify(&t, &default_jwks(), &entra_cfg()), Ok("alice".to_owned()));
+}
+
+#[test]
+fn entra_accepts_tid_other_case() {
+    let t = rs256(&with(claims(), "tid", json!(TENANT.to_uppercase())));
+    assert_eq!(verify(&t, &default_jwks(), &entra_cfg()), Ok("alice".to_owned()));
+}
+
+#[test]
+fn entra_rejects_wrong_tid() {
+    let t = rs256(&with(claims(), "tid", json!("00000000-0000-0000-0000-000000000000")));
+    assert_claims(
+        verify(&t, &default_jwks(), &entra_cfg()),
+        "tenant (tid) mismatch",
+        Some("alice"),
+    );
+}
+
+#[test]
+fn entra_rejects_missing_tid() {
+    let t = rs256(&claims());
+    assert_claims(verify(&t, &default_jwks(), &entra_cfg()), TID_MISSING, Some("alice"));
+}
+
+#[test]
+fn entra_rejects_non_string_tid() {
+    let t = rs256(&with(claims(), "tid", json!(42)));
+    assert_claims(verify(&t, &default_jwks(), &entra_cfg()), TID_MISSING, Some("alice"));
+}
+
+#[test]
+fn entra_v1_token_gets_hint() {
+    let t = rs256(&v1_claims());
+    assert_claims(verify(&t, &default_jwks(), &entra_cfg()), V1_HINT, Some("alice"));
+}
+
+#[test]
+fn v1_issuer_without_entra_is_plain_mismatch() {
+    let t = rs256(&v1_claims());
+    assert_claims(verify(&t, &default_jwks(), &cfg()), "issuer mismatch", Some("alice"));
+}
+
+#[test]
+fn generic_ignores_tid() {
+    let t = rs256(&with(claims(), "tid", json!("wrong")));
+    assert_eq!(verify(&t, &default_jwks(), &cfg()), Ok("alice".to_owned()));
 }

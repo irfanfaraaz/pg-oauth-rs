@@ -282,6 +282,8 @@ mod tests {
             refetch_interval: Duration::from_secs(60),
             max_age: Duration::from_secs(3600),
             max_stale: Duration::from_secs(86400),
+            provider: crate::provider::Provider::Generic,
+            provider_unknown: false,
         }
     }
 

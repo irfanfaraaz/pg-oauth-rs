@@ -16,6 +16,7 @@ use serde_json::json;
 /// Spec bound for a login while the IdP is down: `jwks_timeout` (2 s in tests) + 2 s.
 const FAST: Duration = Duration::from_secs(4);
 const JWKS_URI_SETTING: &str = "pg_oauth_rs.jwks_uri";
+const PROVIDER_SETTING: &str = "pg_oauth_rs.provider";
 
 fn logs_in(user: &str, token: &str) {
     let who = connect_with_token(&login_conninfo(user), token)
@@ -194,6 +195,51 @@ fn jwks_uri_change_drops_old_keys() {
     let _uri = stack::guc(JWKS_URI_SETTING, &missing);
     // The cached keys belong to the old URI: the module must fetch the new one (404), not use them.
     refused("alice", &token, "jwks fetch failed: Http(404)");
+}
+
+#[test]
+fn keycloak_preset_builds_jwks_uri() {
+    stack::start();
+    let _provider = stack::guc(PROVIDER_SETTING, "keycloak");
+    let _uri = stack::guc(JWKS_URI_SETTING, "");
+    logs_in("alice", &tokens::alice());
+}
+
+#[test]
+fn okta_preset_with_keycloak_issuer_not_configured() {
+    stack::start();
+    let _provider = stack::guc(PROVIDER_SETTING, "okta");
+    refused(
+        "alice",
+        &tokens::alice(),
+        "pg_oauth_rs.provider is okta but the pg_hba.conf issuer is not https://<host>/oauth2/<server-id>",
+    );
+}
+
+#[test]
+fn provider_typo_is_refused_by_postgres() {
+    stack::start();
+    // The module is not preloaded, so LOAD registers the enum setting in this session; without it
+    // Postgres would accept any value as a placeholder.
+    let err = stack::try_admin_sql_in_one_session(&[
+        "LOAD 'pg_oauth_rs'",
+        "ALTER SYSTEM SET pg_oauth_rs.provider = 'entraid'",
+    ])
+    .expect_err("a provider typo should be refused");
+    assert!(err.contains("invalid value for parameter"), "unexpected error: {err}");
+    // Never written: a fresh session sees no value (an earlier test's RESET may leave an empty
+    // placeholder), and certainly not the typo.
+    let value =
+        stack::admin_sql("SELECT coalesce(current_setting('pg_oauth_rs.provider', true), '')");
+    assert_eq!(value.as_deref(), Some(""));
+}
+
+#[test]
+fn provider_typo_in_config_refuses_login() {
+    stack::start();
+    // The admin session has not loaded the module, so Postgres stores the typo unchecked.
+    let _provider = stack::guc(PROVIDER_SETTING, "entraid");
+    refused("alice", &tokens::alice(), "pg_oauth_rs.provider has an unknown value");
 }
 
 #[test]

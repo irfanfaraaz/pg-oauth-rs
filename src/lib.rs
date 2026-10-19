@@ -7,6 +7,7 @@ pub mod entry;
 pub mod fetch;
 pub mod ffi;
 pub mod log;
+pub mod provider;
 pub mod settings;
 pub mod token;
 pub mod validate;
