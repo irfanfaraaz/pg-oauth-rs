@@ -1,0 +1,67 @@
+name: Bug report
+description: Something does not work as described.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Never paste a token**, password or client secret, not even an expired one.
+        Security problems go to the private form in SECURITY.md, not here.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Set ...
+        2. Run psql ...
+        3. See ...
+    validations:
+      required: true
+  - type: input
+    id: pg-oauth-rs-version
+    attributes:
+      label: pg-oauth-rs version or commit
+    validations:
+      required: true
+  - type: input
+    id: postgres-version
+    attributes:
+      label: PostgreSQL version
+      placeholder: "18.1"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Server OS
+      placeholder: "Debian 12, Docker postgres:18, ..."
+  - type: dropdown
+    id: idp
+    attributes:
+      label: Identity provider
+      options:
+        - Keycloak
+        - Okta
+        - Microsoft Entra ID
+        - Google
+        - Auth0
+        - Other
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: The pg_hba.conf line, pg_ident.conf map and pg_oauth_rs.* settings. Remove secrets.
+      render: ini
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server log lines
+      description: Lines around the failed login. Check that no token is in them.
+      render: text

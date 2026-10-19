@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "pg-oauth-rs: an OAuth token validator for PostgreSQL 18"
+authors:
+  - family-names: "Faraaz"
+    given-names: "Irfan"
+repository-code: "https://github.com/irfanfaraaz/pg-oauth-rs"
+license: "MIT OR Apache-2.0"
+keywords:
+  - postgresql
+  - oauth
+  - oidc
+  - rust
+  - pgrx
