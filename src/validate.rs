@@ -28,6 +28,8 @@ type KeysError = (&'static str, String);
 const KID_LOG_CHARS: usize = 64;
 /// How long one sleep lasts while waiting for another backend's fetch.
 const WAIT_STEP_MS: c_long = 100;
+/// How many times one login tries to claim a JWKS fetch before using its last plan.
+const CLAIM_TRIES: usize = 3;
 
 /// Decide one login. Logs every non-Allow outcome exactly once; never logs the token.
 pub fn decide(token: &str, _role: &str) -> Decision {
@@ -119,8 +121,21 @@ fn has_kid(keys: &JwkSet, kid: &str) -> bool {
 /// failed refresh when stale-but-usable cached keys were used instead.
 fn load_keys(kid: &str, set: &Settings) -> Result<(JwkSet, Option<String>), KeysError> {
     let mut view = look(kid, set)?;
-    if view.plan == Plan::Refuse {
-        view = wait_for_fetch(kid, set, view)?;
+    // Claim the attempt before fetching, so a failing IdP is not hammered by every backend. A lost
+    // claim means another backend just claimed it: plan again with what it recorded.
+    // shortcut: after CLAIM_TRIES lost claims the last plan is used as is; only reachable with
+    // a near-zero jwks_refetch_interval under heavy contention.
+    for _ in 0..CLAIM_TRIES {
+        if view.plan == Plan::Refuse {
+            view = wait_for_fetch(kid, set, view)?;
+        }
+        let claimed = view.plan == Plan::Fetch
+            && cache::claim_attempt(&set.jwks_uri, &view.snap, view.now)
+                .map_err(|e| ("internal error", format!("cache write failed: {e:?}")))?;
+        if view.plan != Plan::Fetch || claimed {
+            break;
+        }
+        view = look(kid, set)?;
     }
     let View { now, snap, cached, plan } = view;
 
@@ -132,9 +147,6 @@ fn load_keys(kid: &str, set: &Settings) -> Result<(JwkSet, Option<String>), Keys
             Err(("no usable keys", "no cached JWKS and a fetch is throttled".to_owned()))
         }
         Plan::Fetch => {
-            // Record the attempt first so a failing IdP is not hammered by every backend.
-            cache::note_attempt(&set.jwks_uri, now)
-                .map_err(|e| ("internal error", format!("cache write failed: {e:?}")))?;
             match fetch::fetch_jwks(&set.jwks_uri, set.jwks_timeout, cache::JWKS_MAX_BYTES) {
                 Ok(body) => {
                     let keys = serde_json::from_slice::<JwkSet>(&body).map_err(|_| {
@@ -225,5 +237,18 @@ mod tests {
     fn decide_without_config_is_error() {
         // audience and jwks_uri are empty by default, so this cannot be decided.
         assert!(matches!(decide("a.b.c", "alice"), Decision::Error));
+    }
+
+    #[pg_test]
+    fn only_one_claim_per_snapshot() {
+        let uri = "https://idp.example/claim-test";
+        let seen = crate::cache::read().unwrap();
+        let now = std::time::SystemTime::now();
+        assert!(crate::cache::claim_attempt(uri, &seen, now).unwrap());
+        // A second backend that planned with the same snapshot loses the claim.
+        assert!(!crate::cache::claim_attempt(uri, &seen, now).unwrap());
+        let after = crate::cache::read().unwrap();
+        assert_eq!(after.attempt_uri, uri);
+        assert!(crate::cache::claim_attempt(uri, &after, now).unwrap());
     }
 }

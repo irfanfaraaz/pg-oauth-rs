@@ -35,7 +35,7 @@ pub struct Snapshot {
 pub enum Plan {
     /// Cached keys are fresh enough; no fetch.
     UseCache,
-    /// Fetch now (the caller records the attempt first).
+    /// Fetch now (the caller claims the attempt first, see `claim_attempt`).
     Fetch,
     /// A fetch is wanted but throttled; the cached keys are still usable.
     UseCacheNoFetch,
@@ -132,18 +132,24 @@ pub fn store_ok(uri: &str, jwks: &[u8], now: SystemTime) -> Result<(), CacheErro
 }
 
 /// Record a fetch attempt for `uri` (successful or not); this is the throttle every backend shares.
-pub fn note_attempt(uri: &str, now: SystemTime) -> Result<(), CacheError> {
+/// Compare-and-set: records only if the last attempt is still the one in `seen` (the snapshot the
+/// caller planned with). `false` means another backend claimed a fetch since; plan again.
+pub fn claim_attempt(uri: &str, seen: &Snapshot, now: SystemTime) -> Result<bool, CacheError> {
     with_lock(LWLockMode::LW_EXCLUSIVE, |p| {
         // SAFETY: `p` is the attached segment and we hold its lock exclusively. Only the
         // lock-protected fields are borrowed, never the lock itself.
-        let u = unsafe { &mut (*p).attempt_uri };
+        let (u, u_len, last) =
+            unsafe { (&mut (*p).attempt_uri, (*p).attempt_uri_len, (*p).last_attempt) };
+        if from_secs(last) != seen.last_attempt || text(u, u_len)? != seen.attempt_uri {
+            return Ok(false);
+        }
         u.get_mut(..uri.len()).ok_or(CacheError::UriTooLong)?.copy_from_slice(uri.as_bytes());
         // SAFETY: as above.
         unsafe {
             (*p).attempt_uri_len = uri.len();
             (*p).last_attempt = to_secs(now);
         }
-        Ok(())
+        Ok(true)
     })
 }
 

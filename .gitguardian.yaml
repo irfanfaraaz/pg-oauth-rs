@@ -1,0 +1,12 @@
+# GitGuardian (ggshield and the GitHub app). These files hold demo-only credentials that are
+# public on purpose: Keycloak admin/admin, demo users alice/alice and bob/bob, Postgres
+# postgres/postgres. They protect nothing real. Private keys are never committed: demo/make-certs.sh
+# makes them locally.
+version: 2
+secret:
+  ignored_paths:
+    - demo/compose.yaml
+    - demo/keycloak/realm-demo.json
+    - tests/itest/src/lib.rs
+    - tests/itest/src/stack.rs
+    - tests/itest/src/tokens.rs

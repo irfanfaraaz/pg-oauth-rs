@@ -8,7 +8,8 @@ pg-oauth-rs is an **OAuth token validator module for PostgreSQL 18**, written in
 ![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange.svg)
 ![PostgreSQL 18](https://img.shields.io/badge/PostgreSQL-18-336791.svg)
 
-> **Status: pre-alpha.** The design is done. The code is being written. Nothing here is ready for production yet.
+> **Status: pre-alpha.** v0.1 is built and tested end to end against Keycloak. It has no release yet
+> and has not been used in production.
 
 ## Why
 
@@ -35,7 +36,25 @@ psql ──token──▶ PostgreSQL ──validate──▶ pg-oauth-rs ──(
 4. It tells PostgreSQL who the user is (the `sub` claim by default).
 5. PostgreSQL decides which role that person may use, with an exact match or a `pg_ident.conf` map.
 
-## Planned for v0.1
+## Quick start (demo)
+
+You need Docker. This starts Keycloak and PostgreSQL 18 with pg-oauth-rs, then logs you in as `alice`:
+
+```sh
+docker compose -f demo/compose.yaml up -d --build
+docker compose -f demo/compose.yaml run --rm psql \
+  "host=postgres dbname=postgres user=alice oauth_issuer=https://keycloak.localtest.me:8443/realms/demo oauth_client_id=psql"
+```
+
+1. `psql` prints a link and a code.
+2. Open the link in your browser and accept the certificate warning (the demo makes its own CA).
+3. Enter the code, log in as `alice` / `alice` (demo-only password), approve.
+4. `psql` connects as `alice`. No database password was used.
+
+If `keycloak.localtest.me` does not resolve, add `127.0.0.1 keycloak.localtest.me` to `/etc/hosts`.
+Details, accounts and reset steps: [demo/README.md](demo/README.md).
+
+## What v0.1 does
 
 - Verifies RS256 and ES256 JWT access tokens.
 - Checks `iss`, `aud`, `exp` and `nbf`, with 60 s clock leeway.
@@ -44,10 +63,11 @@ psql ──token──▶ PostgreSQL ──validate──▶ pg-oauth-rs ──(
 - Fails closed: any error means "no".
 - Never writes a token to the log.
 - One-command Docker Compose demo with Keycloak.
+- 20 end-to-end login tests against the demo, run in CI on every pull request.
 
-See [CHANGELOG.md](CHANGELOG.md) for what has shipped.
+See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
-## Configuration (planned)
+## Configuration
 
 `postgresql.conf`:
 
@@ -59,7 +79,12 @@ pg_oauth_rs.jwks_uri = 'https://login.example.com/realms/acme/protocol/openid-co
 pg_oauth_rs.identity_claim = 'sub'        # or 'email' (then email_verified must be true)
 pg_oauth_rs.clock_skew_leeway = '60s'
 pg_oauth_rs.jwks_timeout = '5s'
+pg_oauth_rs.jwks_refetch_interval = '60s' # at most one JWKS fetch per interval, for all connections
+pg_oauth_rs.jwks_max_age = '1h'           # refresh cached keys older than this
+pg_oauth_rs.jwks_max_stale = '24h'        # if the IdP is down, keep using cached keys up to this age
 ```
+
+Every setting can be changed with a reload (`SELECT pg_reload_conf()`); no restart is needed.
 
 `pg_hba.conf`:
 

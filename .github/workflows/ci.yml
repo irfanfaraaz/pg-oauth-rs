@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  PGRX_VERSION: 0.19.3
+
+jobs:
+  # lint, unit tests and pgrx tests share ONE job on purpose. build.rs and pgrx's bindings
+  # need a PostgreSQL 18 pg_config even for clippy and `cargo test --lib`, and `cargo pgrx init`
+  # (which builds PostgreSQL from source) is the slow part. One init, one `target/` cache, no
+  # artifact passing between jobs. The cost: a lint failure and a test failure show up in the
+  # same job, each as its own named step.
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bison flex libreadline-dev zlib1g-dev libssl-dev libcurl4-openssl-dev pkg-config libclang-dev
+
+      # rustup does not auto-install the toolchain pinned in rust-toolchain.toml; do it explicitly.
+      - name: Install Rust toolchain
+        run: rustup toolchain install --profile minimal
+
+      - name: Cache cargo and target
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      # Separate cache with a fixed key: the PostgreSQL build does not depend on Cargo.lock.
+      - name: Cache pgrx PostgreSQL
+        id: pgrx-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.pgrx
+          key: pgrx-${{ runner.os }}-${{ env.PGRX_VERSION }}-pg18
+
+      # The cache restores the binary but not cargo's install records, so `cargo install` would
+      # refuse to overwrite it: install only when this version is not already there.
+      - name: Install cargo-pgrx
+        run: |
+          cargo pgrx --version 2>/dev/null | grep -qF " $PGRX_VERSION" ||
+            cargo install --locked --force cargo-pgrx --version "$PGRX_VERSION"
+
+      - name: Build PostgreSQL 18 for pgrx
+        if: steps.pgrx-cache.outputs.cache-hit != 'true'
+        run: cargo pgrx init --pg18 download --configure-flag=--without-icu
+
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+
+      - name: clippy
+        run: cargo clippy --all-targets --features pg18 -- -D warnings
+
+      - name: Unit tests
+        run: cargo test --lib --features pg18
+
+      - name: pgrx tests
+        run: cargo pgrx test pg18
+
+  deny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check licenses advisories bans sources
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Docker and Compose v2 are preinstalled. The script dumps server logs when the tests fail.
+      - name: Integration tests (Keycloak + PostgreSQL 18)
+        run: bash demo/run-itests.sh

@@ -1,0 +1,116 @@
+# pg-oauth-rs demo: Keycloak + PostgreSQL 18 with the module. See demo/README.md.
+# Every password and key here is for this demo only.
+name: pg-oauth-rs-demo
+
+# Trust the demo CA, then run the given command. libcurl (the module's JWKS fetch and
+# libpq's device flow) uses the system CA store.
+x-trust-demo-ca: &trust-demo-ca >-
+  cp /certs/ca.crt /usr/local/share/ca-certificates/pg-oauth-rs-demo-ca.crt &&
+  update-ca-certificates >/dev/null &&
+  exec "$$@"
+
+x-postgres-build: &postgres-build
+  context: ..
+  dockerfile: demo/Dockerfile.postgres
+
+services:
+  certs:
+    image: postgres:18.6-trixie # only for its openssl
+    entrypoint: ["sh", "/make-certs.sh", "/certs"]
+    volumes:
+      - ./make-certs.sh:/make-certs.sh:ro
+      - ./certs:/certs
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.5
+    container_name: pg-oauth-rs-keycloak # fixed: the integration tests stop/start it by name
+    command:
+      - start-dev
+      - --import-realm
+      - --hostname=https://keycloak.localtest.me:8443
+      - --http-enabled=false
+      - --https-port=8443
+      - --https-certificate-file=/certs/keycloak.crt
+      - --https-certificate-key-file=/certs/keycloak.key
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    volumes:
+      - ./certs:/certs:ro
+      - ./keycloak/realm-demo.json:/opt/keycloak/data/import/realm-demo.json:ro
+    ports:
+      - "8443:8443"
+    networks:
+      default:
+        # Same name as from the host, so the token issuer is identical everywhere.
+        aliases: [keycloak.localtest.me]
+    healthcheck:
+      # The image has no curl; an open HTTPS port means startup (and realm import) finished.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8443"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 20s
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+
+  postgres:
+    build: *postgres-build
+    image: pg-oauth-rs-demo/postgres:local
+    container_name: pg-oauth-rs-postgres # fixed: the integration tests read its log by name
+    entrypoint: ["sh", "-c", *trust-demo-ca, "sh", "docker-entrypoint.sh"]
+    command: ["postgres", "-c", "config_file=/etc/pg-oauth-rs/postgresql.conf"]
+    environment:
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - ./certs:/certs:ro
+      - ./postgres/postgresql.conf:/etc/pg-oauth-rs/postgresql.conf:ro
+      - ./postgres/pg_hba.conf:/etc/pg-oauth-rs/pg_hba.conf:ro
+      - ./postgres/pg_ident.conf:/etc/pg-oauth-rs/pg_ident.conf:ro
+      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # TCP, not the socket: the init-time server listens on the socket only.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+
+  psql:
+    profiles: [cli]
+    build: *postgres-build
+    image: pg-oauth-rs-demo/postgres:local
+    entrypoint: ["sh", "-c", *trust-demo-ca, "sh", "psql"]
+    volumes:
+      - ./certs:/certs:ro
+    stdin_open: true
+    tty: true
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  itest:
+    profiles: [test]
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile.itest
+    image: pg-oauth-rs-demo/itest:local
+    entrypoint: ["sh", "-c", *trust-demo-ca, "sh"]
+    # Serially: the tests share one Postgres, one Keycloak and one JWKS cache.
+    command: ["cargo", "test", "--locked", "--", "--test-threads=1"]
+    volumes:
+      - ./certs:/certs:ro
+      # The tests stop/start Keycloak (IdP down) and read the Postgres log with the docker CLI.
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy

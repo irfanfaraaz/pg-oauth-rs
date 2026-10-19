@@ -16,4 +16,5 @@
 *.key
 
 # Demo-generated certificates
-/demo/certs/
+/demo/certs/*
+!/demo/certs/.gitkeep
