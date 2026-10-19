@@ -4,32 +4,16 @@
 
 FROM postgres:18.6-trixie AS builder
 
-RUN set -eux; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends \
-        build-essential pkg-config clang libclang-dev curl ca-certificates \
-        "postgresql-server-dev-${PG_MAJOR}=${PG_VERSION}" \
-        libcurl4-openssl-dev libssl-dev libicu-dev; \
-    rm -rf /var/lib/apt/lists/*
-
-ENV RUSTUP_HOME=/usr/local/rustup \
-    CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:$PATH \
-    PG_CONFIG=/usr/lib/postgresql/18/bin/pg_config
-
 WORKDIR /src
 
-# Toolchain and cargo-pgrx first, so source edits do not redo them.
+# Build tools, toolchain and cargo-pgrx first, so source edits do not redo them.
+# packaging/build-module.sh is shared with the release tarballs.
 COPY rust-toolchain.toml ./
-RUN set -eux; \
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --profile minimal --default-toolchain none; \
-    rustup toolchain install; \
-    cargo install cargo-pgrx --version 0.19.3 --locked; \
-    cargo pgrx init --pg18 "$PG_CONFIG"
+COPY packaging/build-module.sh packaging/
+RUN sh packaging/build-module.sh deps
 
 COPY . .
-RUN cargo pgrx package --features pg18 --pg-config "$PG_CONFIG" --out-dir /pkg
+RUN sh packaging/build-module.sh build /pkg
 
 FROM postgres:18.6-trixie
 

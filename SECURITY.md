@@ -26,11 +26,11 @@ Do not include real tokens or credentials. Use test values.
 
 ## Supported versions
 
-pg-oauth-rs is pre-alpha. Only the latest commit on `main` gets fixes.
-This table will list release lines once releases exist.
+pg-oauth-rs is pre-alpha. Fixes go to `main` and ship in the next release of the latest line.
 
 | Version | Supported |
 |---------|-----------|
+| 0.1.x   | Yes       |
 | `main`  | Yes       |
 
 ## In scope
