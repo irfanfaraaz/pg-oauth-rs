@@ -26,7 +26,7 @@ The first `--build` compiles the module and takes several minutes.
 
 | Service | What it does |
 |---|---|
-| `certs` | One-shot. Runs `make-certs.sh`: a demo CA and a Keycloak certificate in `demo/certs/` (git-ignored). Skips if they exist. |
+| `certs` | One-shot. Runs `make-certs.sh`: a demo CA, a Keycloak certificate and the test signing key in `demo/certs/` (git-ignored). Skips what exists. |
 | `keycloak` | Keycloak on `https://keycloak.localtest.me:8443`, HTTPS only, realm `demo` imported from `keycloak/realm-demo.json`. |
 | `postgres` | PostgreSQL 18 with pg-oauth-rs, config from `postgres/`, demo CA trusted. Not published to the host. |
 | `psql` | Profile `cli`. The same image, used as a client: libpq 18 with the OAuth device flow (`libpq-oauth`). |
@@ -77,7 +77,7 @@ Some DNS resolvers and routers block public names that point to `127.0.0.1`. Add
 
 ```sh
 docker compose -f demo/compose.yaml down -v   # drops the database; init scripts run again next time
-rm -f demo/certs/*.crt demo/certs/*.key        # new CA and certificate next time
+rm -f demo/certs/*.crt demo/certs/*.key demo/certs/*.pem   # new CA, certificate and test key next time
 ```
 
 ## Integration tests
@@ -104,6 +104,8 @@ module and the tests and takes several minutes.
 
 ## Test key
 
-The realm imports a fixed RSA key (`tests/itest/keys/itest-rsa.pem`) and signs tokens with it.
-The integration tests hold its private half to forge tokens. Its private key is public, so this realm
-must never protect anything real.
+The integration tests forge tokens, so they need a signing key Keycloak trusts. `make-certs.sh`
+makes an RSA key pair in `demo/certs/` (`itest-rsa.pem`, git-ignored, like the certificates), and
+the tests load it into the realm as the top-priority RS256 key (`itest-key`) when they start. No
+private key is committed. The key stays in the realm after a run and signs demo tokens too; that is
+harmless, but this realm must still never protect anything real.

@@ -1,5 +1,6 @@
 #!/bin/sh
-# Makes the demo CA and the Keycloak server certificate. Demo only: never use these anywhere real.
+# Makes the demo CA, the Keycloak server certificate and the integration-test signing key.
+# Demo only: never use these anywhere real.
 # Usage: make-certs.sh [dir]   (default: the certs/ folder next to this script)
 # Idempotent: does nothing when the files already exist. Delete the folder's contents to start over.
 set -eu
@@ -7,6 +8,15 @@ set -eu
 dir=${1:-$(dirname "$0")/certs}
 mkdir -p "$dir"
 cd "$dir"
+
+# Test-only RSA key pair. The integration tests load it into Keycloak and forge tokens with it.
+# Made per checkout, never committed. Kept across runs so a running Keycloak's key still matches.
+if [ ! -s itest-rsa.pem ] || [ ! -s itest-rsa.pub.pem ]; then
+    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out itest-rsa.pem
+    openssl pkey -in itest-rsa.pem -pubout -out itest-rsa.pub.pem
+    chmod 600 itest-rsa.pem
+    echo "certs: wrote itest-rsa.pem, itest-rsa.pub.pem to $dir"
+fi
 
 if [ -s ca.crt ] && [ -s keycloak.crt ] && [ -s keycloak.key ]; then
     echo "certs: already present in $dir"

@@ -18,4 +18,3 @@
 # Demo-generated certificates
 /demo/certs/*
 !/demo/certs/.gitkeep
-!tests/itest/keys/*.pem

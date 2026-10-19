@@ -1,9 +1,10 @@
 //! Access tokens: real ones from Keycloak, and forged ones signed with the test key.
 //!
-//! The demo realm imports `keys/itest-rsa.pem` and publishes it in its JWKS, so a forged token
-//! passes the key lookup and fails only the check a test is about.
+//! The test key pair is made per checkout by `demo/make-certs.sh` (in `demo/certs/`, mounted at
+//! `/certs`; never committed). `stack::start` loads it into Keycloak, which then publishes it in
+//! its JWKS, so a forged token passes the key lookup and fails only the check a test is about.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -16,8 +17,15 @@ use serde_json::{json, Value};
 
 use crate::{http, ISSUER, JWKS_URI};
 
-const PRIVATE_PEM: &[u8] = include_bytes!("../keys/itest-rsa.pem");
-const PUBLIC_PEM: &[u8] = include_bytes!("../keys/itest-rsa.pub.pem");
+/// The test key's private half (PKCS#8 PEM).
+pub static PRIVATE_PEM: LazyLock<String> = LazyLock::new(|| read_key("itest-rsa.pem"));
+static PUBLIC_PEM: LazyLock<String> = LazyLock::new(|| read_key("itest-rsa.pub.pem"));
+
+fn read_key(name: &str) -> String {
+    let path = format!("/certs/{name}");
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("{path}: {e} (demo/make-certs.sh makes it)"))
+}
 
 /// Every token handed out in this run, so the last test can check none reached the server log.
 static USED: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -69,8 +77,8 @@ pub fn alice() -> String {
 pub fn itest_kid() -> String {
     static KID: OnceLock<String> = OnceLock::new();
     KID.get_or_init(|| {
-        let public = RsaPublicKey::from_public_key_pem(std::str::from_utf8(PUBLIC_PEM).unwrap())
-            .expect("keys/itest-rsa.pub.pem is an RSA public key");
+        let public = RsaPublicKey::from_public_key_pem(&PUBLIC_PEM)
+            .expect("itest-rsa.pub.pem is an RSA public key");
         let n = URL_SAFE_NO_PAD.encode(public.n().to_bytes_be());
         let jwks: Value = http().get(JWKS_URI).call().unwrap().body_mut().read_json().unwrap();
         jwks["keys"]
@@ -112,7 +120,8 @@ pub fn claims(email: &str) -> Value {
 pub fn forged(claims: &Value) -> String {
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some(itest_kid());
-    let key = EncodingKey::from_rsa_pem(PRIVATE_PEM).expect("keys/itest-rsa.pem is an RSA key");
+    let key =
+        EncodingKey::from_rsa_pem(PRIVATE_PEM.as_bytes()).expect("itest-rsa.pem is an RSA key");
     remember(encode(&header, claims, &key).unwrap())
 }
 
@@ -120,7 +129,7 @@ pub fn forged(claims: &Value) -> String {
 pub fn forged_hs256_with_public_key(claims: &Value) -> String {
     let mut header = Header::new(Algorithm::HS256);
     header.kid = Some(itest_kid());
-    remember(encode(&header, claims, &EncodingKey::from_secret(PUBLIC_PEM)).unwrap())
+    remember(encode(&header, claims, &EncodingKey::from_secret(PUBLIC_PEM.as_bytes())).unwrap())
 }
 
 /// `alg: none` and an empty signature, assembled by hand (no library will make one).

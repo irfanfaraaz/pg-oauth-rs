@@ -22,6 +22,7 @@ pub fn start() {
     static SETUP: Once = Once::new();
     SETUP.call_once(|| {
         wait_for_keycloak();
+        admin().install_test_key();
         set_guc("pg_oauth_rs.jwks_refetch_interval", "1");
         set_guc("pg_oauth_rs.jwks_timeout", "2");
     });
@@ -166,15 +167,35 @@ impl KeycloakAdmin {
         response.body_mut().read_json().unwrap()
     }
 
+    /// Load the test key (`tokens::PRIVATE_PEM`) as the realm's top RS256 key (priority 1000), so
+    /// Keycloak signs real tokens with it and publishes it. Replaces an `itest-key` from an
+    /// earlier run, whose key may differ. It stays after the run; it signs demo tokens harmlessly.
+    pub fn install_test_key(&self) {
+        let found = self.get("/components?type=org.keycloak.keys.KeyProvider&name=itest-key");
+        for old in found.as_array().expect("component list") {
+            let id = old["id"].as_str().expect("component id");
+            self.delete(&format!("/components/{id}"));
+        }
+        self.create_key(json!({
+            "name": "itest-key",
+            "providerId": "rsa",
+            "config": {
+                "privateKey": [tokens::PRIVATE_PEM.as_str()],
+                "priority": ["1000"],
+                "algorithm": ["RS256"],
+                "keyUse": ["sig"],
+                "active": ["true"],
+                "enabled": ["true"],
+            },
+        }));
+    }
+
     /// Add a generated RS256 key that outranks the test key (priority 1000), so Keycloak signs
     /// new tokens with a `kid` the module has not cached. Removed again when the guard drops.
     pub fn rotate_keys(&self) -> Rotation {
-        let realm_id = self.get("")["id"].as_str().expect("realm id").to_owned();
-        let component = json!({
+        let component_id = self.create_key(json!({
             "name": "itest-rotated",
             "providerId": "rsa-generated",
-            "providerType": "org.keycloak.keys.KeyProvider",
-            "parentId": realm_id,
             "config": {
                 "priority": ["2000"],
                 "keySize": ["2048"],
@@ -182,7 +203,14 @@ impl KeycloakAdmin {
                 "active": ["true"],
                 "enabled": ["true"],
             },
-        });
+        }));
+        Rotation { component_id }
+    }
+
+    /// Add a key provider to the realm. Returns its component id.
+    fn create_key(&self, mut component: Value) -> String {
+        component["providerType"] = json!("org.keycloak.keys.KeyProvider");
+        component["parentId"] = self.get("")["id"].clone();
         let response = http()
             .post(format!("{ADMIN_API}/components"))
             .header("Authorization", self.auth())
@@ -191,7 +219,16 @@ impl KeycloakAdmin {
         assert_eq!(response.status(), 201, "create key component");
         let location =
             response.headers().get("location").expect("Location header").to_str().unwrap();
-        Rotation { component_id: location.rsplit('/').next().unwrap().to_owned() }
+        location.rsplit('/').next().unwrap().to_owned()
+    }
+
+    fn delete(&self, path: &str) {
+        let response = http()
+            .delete(format!("{ADMIN_API}{path}"))
+            .header("Authorization", self.auth())
+            .call()
+            .unwrap();
+        assert_eq!(response.status(), 204, "DELETE {path}");
     }
 
     /// Turn a demo user's account off or on. Sends the full user back (GET, change, PUT), so
@@ -222,13 +259,7 @@ pub struct Rotation {
 
 impl Drop for Rotation {
     fn drop(&mut self) {
-        let admin = admin();
-        let response = http()
-            .delete(format!("{ADMIN_API}/components/{}", self.component_id))
-            .header("Authorization", admin.auth())
-            .call()
-            .unwrap();
-        assert_eq!(response.status(), 204, "delete key component");
+        admin().delete(&format!("/components/{}", self.component_id));
     }
 }
 
