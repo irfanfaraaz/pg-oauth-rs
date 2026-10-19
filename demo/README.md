@@ -30,6 +30,7 @@ The first `--build` compiles the module and takes several minutes.
 | `keycloak` | Keycloak on `https://keycloak.localtest.me:8443`, HTTPS only, realm `demo` imported from `keycloak/realm-demo.json`. |
 | `postgres` | PostgreSQL 18 with pg-oauth-rs, config from `postgres/`, demo CA trusted. Not published to the host. |
 | `psql` | Profile `cli`. The same image, used as a client: libpq 18 with the OAuth device flow (`libpq-oauth`). |
+| `itest` | Profile `test`. Runs the integration tests (`tests/itest`). See below. |
 
 ## Accounts (demo only)
 
@@ -78,6 +79,28 @@ Some DNS resolvers and routers block public names that point to `127.0.0.1`. Add
 docker compose -f demo/compose.yaml down -v   # drops the database; init scripts run again next time
 rm -f demo/certs/*.crt demo/certs/*.key        # new CA and certificate next time
 ```
+
+## Integration tests
+
+From the repository root:
+
+```sh
+demo/run-itests.sh
+```
+
+It starts Keycloak and Postgres, builds the `itest` image, runs every test once, and exits with the
+tests' exit code. On failure it prints the Postgres and Keycloak logs. The first run compiles the
+module and the tests and takes several minutes.
+
+- **What they do:** log in through libpq with real tokens (Keycloak password grant, client `itest`)
+  and forged ones (signed with the test key below), one test per accept or refuse case.
+- **How the token gets in:** a libpq auth-data hook (`PQsetAuthDataHook`) hands libpq the token, so
+  no browser is needed.
+- **They change the stack while they run:** `ALTER SYSTEM` on Postgres, a rotated key and a disabled
+  user in Keycloak, and Keycloak stopped and started. Every change is undone when its test ends.
+- **The `itest` container mounts `/var/run/docker.sock`,** so it can stop Keycloak and read the
+  Postgres log. That gives it control of your Docker daemon. Demo and test use only.
+- **Serial on purpose:** the tests share one Postgres, one Keycloak and one JWKS cache.
 
 ## Test key
 

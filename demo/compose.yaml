@@ -23,6 +23,7 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.7.5
+    container_name: pg-oauth-rs-keycloak # fixed: the integration tests stop/start it by name
     command:
       - start-dev
       - --import-realm
@@ -57,6 +58,7 @@ services:
   postgres:
     build: *postgres-build
     image: pg-oauth-rs-demo/postgres:local
+    container_name: pg-oauth-rs-postgres # fixed: the integration tests read its log by name
     entrypoint: ["sh", "-c", *trust-demo-ca, "sh", "docker-entrypoint.sh"]
     command: ["postgres", "-c", "config_file=/etc/pg-oauth-rs/postgresql.conf"]
     environment:
@@ -89,6 +91,25 @@ services:
     depends_on:
       certs:
         condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  itest:
+    profiles: [test]
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile.itest
+    image: pg-oauth-rs-demo/itest:local
+    entrypoint: ["sh", "-c", *trust-demo-ca, "sh"]
+    # Serially: the tests share one Postgres, one Keycloak and one JWKS cache.
+    command: ["cargo", "test", "--", "--test-threads=1"]
+    volumes:
+      - ./certs:/certs:ro
+      # The tests stop/start Keycloak (IdP down) and read the Postgres log with the docker CLI.
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
       keycloak:
         condition: service_healthy
       postgres:
