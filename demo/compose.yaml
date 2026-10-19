@@ -104,7 +104,7 @@ services:
     image: pg-oauth-rs-demo/itest:local
     entrypoint: ["sh", "-c", *trust-demo-ca, "sh"]
     # Serially: the tests share one Postgres, one Keycloak and one JWKS cache.
-    command: ["cargo", "test", "--", "--test-threads=1"]
+    command: ["cargo", "test", "--locked", "--", "--test-threads=1"]
     volumes:
       - ./certs:/certs:ro
       # The tests stop/start Keycloak (IdP down) and read the Postgres log with the docker CLI.

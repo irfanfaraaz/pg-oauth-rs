@@ -5,6 +5,13 @@ all-features = true
 
 [advisories]
 version = 2
+ignore = [
+    # Marvin: timing leak in RSA *decryption*. jsonwebtoken only verifies signatures with public
+    # keys, so no private-key operation exists to leak. No fixed rsa release yet.
+    { id = "RUSTSEC-2023-0071", reason = "no RSA decryption or private-key use in this crate" },
+    # serde_cbor is unmaintained. It comes only through the pgrx-tests dev-dependency.
+    { id = "RUSTSEC-2021-0127", reason = "test-only dependency of pgrx-tests" },
+]
 
 [licenses]
 version = 2

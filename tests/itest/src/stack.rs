@@ -66,13 +66,6 @@ pub fn guc(name: &'static str, value: &str) -> GucGuard {
     GucGuard { name, old }
 }
 
-/// Drop the timing settings `start` made, so the demo keeps its normal values after the run.
-pub fn reset_timing() {
-    admin_sql("ALTER SYSTEM RESET pg_oauth_rs.jwks_refetch_interval");
-    admin_sql("ALTER SYSTEM RESET pg_oauth_rs.jwks_timeout");
-    admin_sql("SELECT pg_reload_conf()");
-}
-
 /// An equivalent JWKS URL the module has never seen. The cache holds keys for one URI only, so
 /// switching to this gives a cold cache. Unique across runs: the server's cache outlives them.
 pub fn cold_jwks_uri() -> String {

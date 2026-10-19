@@ -15,6 +15,11 @@ fi
 $compose --profile test run --rm --build itest
 status=$?
 
+# The tests change settings with ALTER SYSTEM. Drop them all, pass or fail, so the demo runs on
+# demo/postgres/postgresql.conf again. Separate -c commands: ALTER SYSTEM cannot run in a transaction.
+$compose exec -T postgres psql -U postgres -q \
+    -c "ALTER SYSTEM RESET ALL" -c "SELECT pg_reload_conf()" >/dev/null
+
 if [ "$status" -ne 0 ]; then
     echo "integration tests failed (exit $status); server logs follow" >&2
     $compose logs postgres keycloak

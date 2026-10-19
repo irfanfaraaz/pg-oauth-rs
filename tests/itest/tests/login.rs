@@ -221,7 +221,10 @@ fn parallel_logins_idp_down_one_fetch() {
         assert!(result.is_err(), "no keys, so every login is refused");
         assert!(*took < FAST, "a login took {took:?}, want < {FAST:?}");
     }
-    let log = stack::wait_for_log(since, "jwks fetch failed");
+    stack::wait_for_log(since, "jwks fetch failed");
+    // Let any later fetch lines reach Docker too before counting.
+    thread::sleep(Duration::from_secs(1));
+    let log = stack::server_log_since(since);
     assert_eq!(
         log.matches("jwks fetch failed").count(),
         1,
@@ -253,5 +256,4 @@ fn zz_no_token_in_server_log() {
             assert!(!log.contains(part), "part of a token appears in the Postgres server log");
         }
     }
-    stack::reset_timing();
 }

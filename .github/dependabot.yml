@@ -12,3 +12,8 @@ updates:
     directory: "/demo"
     schedule:
       interval: "weekly"
+  # The Keycloak image is pinned in compose.yaml, which the "docker" ecosystem does not read.
+  - package-ecosystem: "docker-compose"
+    directory: "/demo"
+    schedule:
+      interval: "weekly"

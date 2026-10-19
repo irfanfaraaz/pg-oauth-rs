@@ -21,11 +21,16 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH
 
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --profile minimal --default-toolchain stable
-
 WORKDIR /itest
+
+# The same pinned toolchain as the module (rust-toolchain.toml), and the committed Cargo.lock.
+COPY rust-toolchain.toml ./
+RUN set -eux; \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --profile minimal --default-toolchain none; \
+    rustup toolchain install
+
 COPY tests/itest/ ./
-RUN cargo test --no-run
+RUN cargo test --locked --no-run
 
 # compose.yaml sets the entrypoint (trust the demo CA) and the command (cargo test, serially).
