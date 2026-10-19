@@ -29,14 +29,37 @@ before you write a large change.
 
 You need:
 
-- Rust (stable, see `rust-toolchain.toml` once the code lands).
+- Rust, pinned in `rust-toolchain.toml` (rustup installs it for you).
 - [`cargo-pgrx`](https://github.com/pgcentralfoundation/pgrx) at the version in `Cargo.toml`.
 - PostgreSQL 18 with development headers, plus libcurl.
 - Docker and Docker Compose for the demo and integration tests.
 
 The Linux Docker build is the reference build. macOS works for development, best effort.
 
-Exact commands will be listed here when the first code lands.
+One-time setup:
+
+```sh
+cargo install --locked cargo-pgrx --version 0.19.3
+cargo pgrx init --pg18 download --configure-flag=--without-icu   # builds PostgreSQL 18 under ~/.pgrx
+# or reuse an installed server: cargo pgrx init --pg18 /path/to/pg_config
+```
+
+`build.rs` finds `pg_config` through `PGRX_PG_CONFIG_PATH`, then `PG_CONFIG`, then `~/.pgrx/config.toml`,
+then `PATH`. After `cargo pgrx init` nothing else needs setting.
+
+Everyday commands (CI runs the same ones):
+
+```sh
+cargo fmt --all -- --check                                    # formatting
+cargo clippy --all-targets --features pg18 -- -D warnings     # lint
+cargo test --lib --features pg18                              # unit tests, no server
+cargo pgrx test pg18                                          # tests inside a pgrx-managed PostgreSQL 18
+bash demo/run-itests.sh                                       # integration tests: Keycloak + PostgreSQL 18 in Docker
+cargo deny check                                              # licenses, advisories, bans, sources
+```
+
+`cargo deny` needs [`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny) (`cargo install --locked cargo-deny`).
+See [`demo/README.md`](demo/README.md) for the demo stack.
 
 ## Rules for code
 
