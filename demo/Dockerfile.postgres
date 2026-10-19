@@ -9,7 +9,7 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends \
         build-essential pkg-config clang libclang-dev curl ca-certificates \
         "postgresql-server-dev-${PG_MAJOR}=${PG_VERSION}" \
-        libcurl4-openssl-dev libssl-dev; \
+        libcurl4-openssl-dev libssl-dev libicu-dev; \
     rm -rf /var/lib/apt/lists/*
 
 ENV RUSTUP_HOME=/usr/local/rustup \
