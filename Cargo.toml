@@ -1,0 +1,47 @@
+[package]
+name = "pg_oauth_rs"
+version = "0.0.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/irfanfaraaz/pg-oauth-rs"
+description = "PostgreSQL 18 OAuth validator module that verifies JWT access tokens against an IdP's JWKS"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+default = ["pg18"]
+pg18 = ["pgrx/pg18", "pgrx-tests/pg18"]
+pg19 = ["pgrx/pg19", "pgrx-tests/pg19"]
+pg_test = []
+
+[dependencies]
+pgrx = "=0.19.3"
+jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"] }
+curl = "0.4.51"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+cc = "1"
+
+[dev-dependencies]
+pgrx-tests = "=0.19.3"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+
+[profile.dev]
+panic = "unwind"
+
+[profile.release]
+panic = "unwind"
+opt-level = 3
+lto = "fat"
+codegen-units = 1
