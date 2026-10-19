@@ -60,9 +60,12 @@ jobs:
           path: ~/.pgrx
           key: pgrx-${{ runner.os }}-${{ env.PGRX_VERSION }}-pg18
 
-      # `cargo install` is a no-op when this version is already in the cached ~/.cargo/bin.
+      # The cache restores the binary but not cargo's install records, so `cargo install` would
+      # refuse to overwrite it: install only when this version is not already there.
       - name: Install cargo-pgrx
-        run: cargo install --locked cargo-pgrx --version "$PGRX_VERSION"
+        run: |
+          cargo pgrx --version 2>/dev/null | grep -qF " $PGRX_VERSION" ||
+            cargo install --locked --force cargo-pgrx --version "$PGRX_VERSION"
 
       - name: Build PostgreSQL 18 for pgrx
         if: steps.pgrx-cache.outputs.cache-hit != 'true'

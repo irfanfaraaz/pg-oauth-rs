@@ -1,0 +1,6 @@
+# tests/ is the integration-test crate. It never ships, and it logs in to the demo stack with the
+# demo's public, demo-only credentials on purpose (see demo/README.md), which CodeQL reports as
+# hard-coded passwords. The module (src/) and the workflows are still scanned.
+name: pg-oauth-rs CodeQL config
+paths-ignore:
+  - tests
