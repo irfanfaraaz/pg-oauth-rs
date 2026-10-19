@@ -18,3 +18,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `demo/run-itests.sh`.
 - CI (GitHub Actions): rustfmt, clippy, unit and pgrx tests, integration tests, cargo-deny,
   and CodeQL for Rust and workflows. Every action is pinned to a commit SHA.
+- Dependabot updates for the demo's Dockerfiles and the Compose file (Keycloak image).
