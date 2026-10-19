@@ -24,6 +24,8 @@ pub struct CheckConfig<'a> {
     pub identity_claim: &'a str,
     /// Grace on `exp` and `nbf`, in seconds.
     pub leeway_secs: u64,
+    /// Entra tenant GUID from the issuer. `Some` turns on the `tid` check and the v1 hint.
+    pub entra_tenant: Option<&'a str>,
 }
 
 /// Why a token was refused.
@@ -172,11 +174,37 @@ pub fn verify(token: &str, jwks: &JwkSet, cfg: &CheckConfig) -> Result<String, R
     full.validate_nbf = true;
     full.leeway = cfg.leeway_secs;
     if let Err(e) = decode::<Value>(token, &key, &full) {
-        return Err(Refusal::Claims { reason: claims_reason(e.kind()), authn_id: id });
+        let v1_iss = claims
+            .get("iss")
+            .and_then(Value::as_str)
+            .is_some_and(|i| i.starts_with("https://sts.windows.net/"));
+        let reason = if matches!(e.kind(), ErrorKind::InvalidIssuer)
+            && cfg.entra_tenant.is_some()
+            && v1_iss
+        {
+            "issuer mismatch (v1 token: set requestedAccessTokenVersion to 2 in the app manifest)"
+        } else {
+            claims_reason(e.kind())
+        };
+        return Err(Refusal::Claims { reason, authn_id: id });
     }
     // The library also accepts an `iss` array containing the issuer; the spec wants one exact string.
     if claims.get("iss").and_then(Value::as_str) != Some(cfg.issuer) {
         return Err(Refusal::Claims { reason: "issuer mismatch", authn_id: id });
+    }
+    if let Some(tenant) = cfg.entra_tenant {
+        match claims.get("tid").and_then(Value::as_str) {
+            None => {
+                return Err(Refusal::Claims {
+                    reason: "tid missing (add profile to the pg_hba.conf scope)",
+                    authn_id: id,
+                })
+            }
+            Some(t) if !t.eq_ignore_ascii_case(tenant) => {
+                return Err(Refusal::Claims { reason: "tenant (tid) mismatch", authn_id: id })
+            }
+            Some(_) => {}
+        }
     }
 
     let Some(id) = id else {

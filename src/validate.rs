@@ -64,6 +64,7 @@ pub fn decide(token: &str, _role: &str) -> Decision {
         audience: &set.audience,
         identity_claim: &set.identity_claim,
         leeway_secs: set.leeway.as_secs(),
+        entra_tenant: None,
     };
     match token::verify(token, &keys, &cfg) {
         Ok(authn_id) => Decision::Allow { authn_id },
