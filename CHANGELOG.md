@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `pg_oauth_rs.provider` presets for Entra ID, Okta and Keycloak (JWKS URL and identity claim from the
+  issuer; Entra tenant check).
+
 ### Changed
 
+- `pg_oauth_rs.identity_claim` now defaults to empty, meaning the provider's claim (`sub` for generic,
+  so no behaviour change).
 - License: Apache-2.0 only (0.1.0 was released under MIT OR Apache-2.0).
 
 ## [0.1.0] - 2026-10-19

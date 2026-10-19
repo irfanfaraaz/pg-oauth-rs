@@ -1,6 +1,6 @@
 # pg-oauth-rs
 
-Log in to PostgreSQL with your company login (Keycloak, Okta, Entra ID, Google) instead of a database password.
+Log in to PostgreSQL with your company login (Keycloak, Okta, Entra ID) instead of a database password.
 
 pg-oauth-rs is an **OAuth token validator module for PostgreSQL 18**, written in Rust with [pgrx](https://github.com/pgcentralfoundation/pgrx).
 
@@ -100,7 +100,8 @@ oauth_validator_libraries = 'pg_oauth_rs'
 pg_oauth_rs.audience = 'postgres'
 pg_oauth_rs.jwks_uri = 'https://login.example.com/realms/acme/protocol/openid-connect/certs'
 # optional
-pg_oauth_rs.identity_claim = 'sub'        # or 'email' (then email_verified must be true)
+pg_oauth_rs.provider = 'generic'          # or entra, okta, keycloak
+pg_oauth_rs.identity_claim = ''           # empty = the provider's claim ('sub' for generic); or 'email' (then email_verified must be true)
 pg_oauth_rs.clock_skew_leeway = '60s'
 pg_oauth_rs.jwks_timeout = '5s'
 pg_oauth_rs.jwks_refetch_interval = '60s' # at most one JWKS fetch per interval, for all connections
@@ -124,6 +125,133 @@ oauth  /^(.*)@example\.com$  \1
 
 The issuer is set only in `pg_hba.conf`. pg-oauth-rs reads it from there.
 
+With a provider (`entra`, `okta` or `keycloak`), two settings can stay empty:
+
+- An empty `jwks_uri` is built from the issuer. Set it and pg-oauth-rs uses your value as is.
+- An empty `identity_claim` uses the provider's claim: `oid` for Entra, `sub` for the others.
+
+With `generic` (the default), nothing changes: `jwks_uri` is required and the identity is `sub`.
+`audience` is required for every provider. See [Providers](#providers).
+
+pg-oauth-rs is loaded only when someone logs in, so Postgres cannot check `pg_oauth_rs.provider` at reload.
+If you misspell it, Postgres logs a WARNING (`invalid value for parameter "pg_oauth_rs.provider"`) at the
+next login and falls back to `generic`. After you change it, look at the server log. To check it yourself,
+run this as a superuser:
+
+```sql
+LOAD 'pg_oauth_rs';
+SHOW pg_oauth_rs.provider;
+```
+
+## Providers
+
+A provider setting tells pg-oauth-rs what your IdP's issuer looks like. It then builds the key (JWKS) URL
+for you and picks the right identity claim. If the issuer in `pg_hba.conf` has the wrong shape, pg-oauth-rs
+refuses the login and logs `pg_oauth_rs: not configured: ...` with the shape it expected.
+
+### Entra ID
+
+Use a single-tenant app registration. Multi-tenant issuers (`common`, `organizations`) do not work.
+
+In the Entra admin center:
+
+1. Create an app registration for your tenant only.
+2. Under *Expose an API*, add a scope (for example `postgres`).
+3. In the app manifest, set `requestedAccessTokenVersion` to `2`.
+4. Under *Authentication*, turn on *Allow public client flows*. `psql` needs this for device login.
+
+`postgresql.conf`:
+
+```ini
+pg_oauth_rs.provider = 'entra'
+pg_oauth_rs.audience = '<app-client-id>'
+```
+
+`pg_hba.conf`:
+
+```
+host  all  all  0.0.0.0/0  oauth  issuer="https://login.microsoftonline.com/<tenant-id>/v2.0" scope="openid profile api://<app-id>/<scope>" map=oauth
+```
+
+- The scope must include `profile`. Without it, Entra leaves `tid`, `oid` and `preferred_username` out of the token, and every login is refused.
+- `audience` is the app's client ID.
+- pg-oauth-rs checks that the token's `tid` is the tenant in the issuer.
+- A v1 token is refused with a hint to set `requestedAccessTokenVersion` to `2`.
+
+The identity is the user's `oid` (object ID). It never changes, so it is safe to trust. Add one line per
+person to `pg_ident.conf`:
+
+```
+oauth  <object-id>  alice
+```
+
+Find the object ID in the Entra admin center: *Users*, pick the user, then the *Overview* page.
+
+To use names like `alice@contoso.com` instead, set `pg_oauth_rs.identity_claim = 'preferred_username'`. Then
+one regex line can map your whole company. The risk: an Entra admin can rename a user. If a name is later
+reused, the new owner gets the old person's database role. Use this only if you accept that.
+
+Do not use `email` with Entra. Entra does not verify it, and pg-oauth-rs refuses it without `email_verified`.
+
+### Okta
+
+Use a custom authorization server. The built-in `default` server works. The Okta org authorization server
+(an issuer without `/oauth2/...`) is not supported.
+
+In the Okta admin console:
+
+1. Add a custom scope to the authorization server.
+2. Add an access policy rule that allows the *Device Authorization* grant.
+3. Create a native app and turn on the *Device Authorization* grant.
+
+`postgresql.conf`:
+
+```ini
+pg_oauth_rs.provider = 'okta'
+pg_oauth_rs.audience = 'api://default'   # the audience of your authorization server
+```
+
+`pg_hba.conf`:
+
+```
+host  all  all  0.0.0.0/0  oauth  issuer="https://<org>.okta.com/oauth2/default" scope="openid <your-scope>" map=oauth
+```
+
+- `audience` is your authorization server's audience. For `default`, it is `api://default`.
+- The identity is `sub`, which is the Okta login.
+- Okta does not send `email_verified` by default, so `identity_claim = 'email'` is refused.
+
+### Keycloak
+
+Set the issuer to `https://<host>/realms/<realm>`. This is the issuer shape the demo uses.
+
+`postgresql.conf`:
+
+```ini
+pg_oauth_rs.provider = 'keycloak'
+pg_oauth_rs.audience = 'postgres'
+```
+
+`pg_hba.conf`:
+
+```
+host  all  all  0.0.0.0/0  oauth  issuer="https://<host>/realms/<realm>" scope="openid" map=oauth
+```
+
+The identity is `sub`. If Keycloak runs under a path prefix, the issuer is `https://<host>/<prefix>/realms/<realm>`.
+
+### Why not Google
+
+Google is not supported, for two reasons:
+
+- Google access tokens are opaque. They are not JWTs, so pg-oauth-rs cannot check them offline.
+- Google's device login only allows the `openid`, `email` and `profile` scopes. A token cannot say
+  "this user allowed access to Postgres". The libpq author calls a login like this stealable: any other
+  "Log in with Google" site could use the same shared client ID to get a token that your database accepts.
+  See [the pgsql-hackers thread](https://www.mail-archive.com/pgsql-hackers@lists.postgresql.org/msg207205.html).
+
+Google may come back if opaque-token support lands and a safe client flow exists (see the Roadmap).
+
 ## Who this is for
 
 - People who connect **straight to the database** with `psql`: developers, DBAs, analysts.
@@ -134,11 +262,11 @@ The issuer is set only in `pg_hba.conf`. pg-oauth-rs reads it from there.
 
 ## Roadmap
 
-- Token introspection for opaque tokens (RFC 7662).
+- Token introspection for opaque tokens (RFC 7662), and Google if a safe client flow exists.
 - Group claims mapped to many roles.
 - PostgreSQL 19 support (log-only failure details, per-line `pg_hba.conf` options).
 - Machine logins for scripts and CI.
-- Provider presets for Google, Okta, Entra ID, Auth0 and Keycloak.
+- Provider presets for Auth0.
 - Packages: GitHub Releases, PGXN, Debian/RPM, Docker image.
 
 ## Security
