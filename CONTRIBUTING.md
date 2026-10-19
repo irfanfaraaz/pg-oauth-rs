@@ -84,6 +84,18 @@ See [`demo/README.md`](demo/README.md) for the demo stack.
 Use a short imperative subject line (`Add JWKS cache`, `Fix leeway on nbf`). Explain the why in the body
 when it is not obvious.
 
+## Releasing (maintainers)
+
+1. Set `version` in `Cargo.toml` and run `cargo check` to update `Cargo.lock`.
+2. In `CHANGELOG.md`, move the **Unreleased** entries under `## [X.Y.Z] - YYYY-MM-DD` and update the
+   links at the bottom. Also set `version` and `date-released` in `CITATION.cff`.
+3. Merge that to `main` through a pull request. Its CI runs the release build as a dry run.
+4. Tag `main` and push the tag: `git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z`.
+
+The `Release` workflow then checks that the tag matches `Cargo.toml` and the CHANGELOG, builds the
+tarballs and the multi-arch image, attests them, and publishes the GitHub Release with the CHANGELOG
+section as its notes.
+
 ## License of contributions
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work
