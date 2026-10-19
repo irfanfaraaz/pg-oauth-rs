@@ -1,11 +1,12 @@
 //! Glue that combines settings, cache, fetch and token checks into the authorization decision.
 
-use std::ffi::CStr;
-use std::time::{Duration, SystemTime};
+use std::ffi::{c_int, c_long, CStr};
+use std::time::{Duration, Instant, SystemTime};
 
 use jsonwebtoken::jwk::JwkSet;
+use pgrx::pg_sys;
 
-use crate::cache::{self, Plan};
+use crate::cache::{self, Plan, Snapshot};
 use crate::settings::{self, Settings};
 use crate::token::{self, CheckConfig};
 use crate::{fetch, log, pg_oauth_rs_hba_issuer};
@@ -22,6 +23,11 @@ pub enum Decision {
 
 /// Why the keys could not be loaded: a short reason for the log and the specifics.
 type KeysError = (&'static str, String);
+
+/// Longest `kid` put in a log line; the header is unverified, so it is attacker-sized.
+const KID_LOG_CHARS: usize = 64;
+/// How long one sleep lasts while waiting for another backend's fetch.
+const WAIT_STEP_MS: c_long = 100;
 
 /// Decide one login. Logs every non-Allow outcome exactly once; never logs the token.
 pub fn decide(token: &str, _role: &str) -> Decision {
@@ -91,7 +97,9 @@ fn hba_issuer() -> Option<String> {
 fn context(kid: Option<&str>, issuer: &str, authn_id: Option<&str>, note: Option<&str>) -> String {
     let mut parts = Vec::new();
     if let Some(kid) = kid {
-        parts.push(format!("kid={kid:?}"));
+        let short: String = kid.chars().take(KID_LOG_CHARS).collect();
+        let more = if short.len() < kid.len() { "…" } else { "" };
+        parts.push(format!("kid={short:?}{more}"));
     }
     parts.push(format!("issuer={issuer:?}"));
     if let Some(id) = authn_id {
@@ -110,15 +118,13 @@ fn has_kid(keys: &JwkSet, kid: &str) -> bool {
 /// Get the JWKS to verify with, from the cache or a fetch. The second value is a note about a
 /// failed refresh when stale-but-usable cached keys were used instead.
 fn load_keys(kid: &str, set: &Settings) -> Result<(JwkSet, Option<String>), KeysError> {
-    let now = SystemTime::now();
-    let snap =
-        cache::read().map_err(|e| ("internal error", format!("cache read failed: {e:?}")))?;
-    let cached = (snap.uri == set.jwks_uri)
-        .then(|| serde_json::from_slice::<JwkSet>(&snap.jwks).ok())
-        .flatten();
-    let need_kid = !cached.as_ref().is_some_and(|k| has_kid(k, kid));
+    let mut view = look(kid, set)?;
+    if view.plan == Plan::Refuse {
+        view = wait_for_fetch(kid, set, view)?;
+    }
+    let View { now, snap, cached, plan } = view;
 
-    match cache::plan(&snap, &set.jwks_uri, need_kid, now, set) {
+    match plan {
         Plan::UseCache | Plan::UseCacheNoFetch => cached
             .map(|k| (k, None))
             .ok_or(("internal error", "cached JWKS is not valid JSON".to_owned())),
@@ -127,7 +133,7 @@ fn load_keys(kid: &str, set: &Settings) -> Result<(JwkSet, Option<String>), Keys
         }
         Plan::Fetch => {
             // Record the attempt first so a failing IdP is not hammered by every backend.
-            cache::note_attempt(now)
+            cache::note_attempt(&set.jwks_uri, now)
                 .map_err(|e| ("internal error", format!("cache write failed: {e:?}")))?;
             match fetch::fetch_jwks(&set.jwks_uri, set.jwks_timeout, cache::JWKS_MAX_BYTES) {
                 Ok(body) => {
@@ -152,6 +158,50 @@ fn load_keys(kid: &str, set: &Settings) -> Result<(JwkSet, Option<String>), Keys
             }
         }
     }
+}
+
+/// The cache as this backend sees it right now.
+struct View {
+    now: SystemTime,
+    snap: Snapshot,
+    /// The cached keys, when they are for the configured URI and parse.
+    cached: Option<JwkSet>,
+    plan: Plan,
+}
+
+fn look(kid: &str, set: &Settings) -> Result<View, KeysError> {
+    let now = SystemTime::now();
+    let snap =
+        cache::read().map_err(|e| ("internal error", format!("cache read failed: {e:?}")))?;
+    let cached = (snap.uri == set.jwks_uri)
+        .then(|| serde_json::from_slice::<JwkSet>(&snap.jwks).ok())
+        .flatten();
+    let need_kid = !cached.as_ref().is_some_and(|k| has_kid(k, kid));
+    let plan = cache::plan(&snap, &set.jwks_uri, need_kid, now, set);
+    Ok(View { now, snap, cached, plan })
+}
+
+/// Nothing usable is cached and fetching is throttled. If the throttling attempt (for this URI)
+/// is younger than `jwks_timeout`, another backend may still be fetching: sleep on the latch and
+/// re-read until the plan changes or that attempt is `jwks_timeout` old (also capped locally, in
+/// case the clock jumped back).
+fn wait_for_fetch(kid: &str, set: &Settings, mut view: View) -> Result<View, KeysError> {
+    let deadline = Instant::now().checked_add(set.jwks_timeout);
+    while view.plan == Plan::Refuse
+        && deadline.is_some_and(|d| Instant::now() < d)
+        && view.snap.last_attempt.filter(|_| view.snap.attempt_uri == set.jwks_uri).is_some_and(
+            |t| view.now.duration_since(t).unwrap_or(Duration::ZERO) < set.jwks_timeout,
+        )
+    {
+        let events = pg_sys::WL_LATCH_SET | pg_sys::WL_TIMEOUT | pg_sys::WL_EXIT_ON_PM_DEATH;
+        // SAFETY: MyLatch is this backend's own latch.
+        let rc = unsafe { pg_sys::WaitLatch(pg_sys::MyLatch, events as c_int, WAIT_STEP_MS, 0) };
+        if rc as u32 & pg_sys::WL_LATCH_SET != 0 {
+            fetch::on_latch();
+        }
+        view = look(kid, set)?;
+    }
+    Ok(view)
 }
 
 #[cfg(any(test, feature = "pg_test"))]

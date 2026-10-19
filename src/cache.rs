@@ -4,7 +4,6 @@
 //! `plan` is the pure fetch decision; everything else touches Postgres.
 
 use std::ffi::{c_int, c_void, CStr};
-use std::panic::AssertUnwindSafe;
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -27,6 +26,8 @@ pub struct Snapshot {
     pub uri: String,
     pub last_ok: Option<SystemTime>,
     pub last_attempt: Option<SystemTime>,
+    /// The `jwks_uri` that `last_attempt` was for.
+    pub attempt_uri: String,
 }
 
 /// What to do about the JWKS for this login.
@@ -44,8 +45,8 @@ pub enum Plan {
 
 #[derive(Debug)]
 pub enum CacheError {
-    /// Postgres raised an ERROR (or a panic happened) while touching the segment or its lock.
-    Postgres,
+    /// `GetNamedDSMSegment` returned NULL.
+    NoSegment,
     UriTooLong,
     JwksTooLarge,
     /// Stored lengths or bytes are invalid.
@@ -69,7 +70,8 @@ pub fn plan(s: &Snapshot, cfg_uri: &str, need_kid: bool, now: SystemTime, set: &
     if !want_fetch {
         return Plan::UseCache;
     }
-    let may_fetch = match s.last_attempt {
+    // An attempt for another URI does not throttle this one.
+    let may_fetch = match s.last_attempt.filter(|_| s.attempt_uri == cfg_uri) {
         None => true,
         Some(t) => since(t) >= set.refetch_interval,
     };
@@ -85,16 +87,25 @@ pub fn read() -> Result<Snapshot, CacheError> {
     with_lock(LWLockMode::LW_SHARED, |p| {
         // SAFETY: `p` is the attached segment and we hold its lock in shared mode. Only the
         // lock-protected fields are borrowed, never the lock itself.
-        let (uri, uri_len, jwks, jwks_len, last_ok, last_attempt) = unsafe {
-            (&(*p).uri, (*p).uri_len, &(*p).jwks, (*p).jwks_len, (*p).last_ok, (*p).last_attempt)
+        let (uri, uri_len, jwks, jwks_len, last_ok, last_attempt, attempt_uri, attempt_uri_len) = unsafe {
+            (
+                &(*p).uri,
+                (*p).uri_len,
+                &(*p).jwks,
+                (*p).jwks_len,
+                (*p).last_ok,
+                (*p).last_attempt,
+                &(*p).attempt_uri,
+                (*p).attempt_uri_len,
+            )
         };
-        let uri = uri.get(..uri_len).ok_or(CacheError::Corrupt)?;
         let jwks = jwks.get(..jwks_len).ok_or(CacheError::Corrupt)?;
         Ok(Snapshot {
             jwks: jwks.to_vec(),
-            uri: String::from_utf8(uri.to_vec()).map_err(|_| CacheError::Corrupt)?,
+            uri: text(uri, uri_len)?,
             last_ok: from_secs(last_ok),
             last_attempt: from_secs(last_attempt),
+            attempt_uri: text(attempt_uri, attempt_uri_len)?,
         })
     })
 }
@@ -120,13 +131,26 @@ pub fn store_ok(uri: &str, jwks: &[u8], now: SystemTime) -> Result<(), CacheErro
     })
 }
 
-/// Record a fetch attempt (successful or not); this is the throttle every backend shares.
-pub fn note_attempt(now: SystemTime) -> Result<(), CacheError> {
+/// Record a fetch attempt for `uri` (successful or not); this is the throttle every backend shares.
+pub fn note_attempt(uri: &str, now: SystemTime) -> Result<(), CacheError> {
     with_lock(LWLockMode::LW_EXCLUSIVE, |p| {
-        // SAFETY: `p` is the attached segment and we hold its lock exclusively.
-        unsafe { (*p).last_attempt = to_secs(now) };
+        // SAFETY: `p` is the attached segment and we hold its lock exclusively. Only the
+        // lock-protected fields are borrowed, never the lock itself.
+        let u = unsafe { &mut (*p).attempt_uri };
+        u.get_mut(..uri.len()).ok_or(CacheError::UriTooLong)?.copy_from_slice(uri.as_bytes());
+        // SAFETY: as above.
+        unsafe {
+            (*p).attempt_uri_len = uri.len();
+            (*p).last_attempt = to_secs(now);
+        }
         Ok(())
     })
+}
+
+/// The first `len` bytes of `buf` as UTF-8.
+fn text(buf: &[u8], len: usize) -> Result<String, CacheError> {
+    let bytes = buf.get(..len).ok_or(CacheError::Corrupt)?;
+    String::from_utf8(bytes.to_vec()).map_err(|_| CacheError::Corrupt)
 }
 
 /// Shared-memory layout. Zeroed means empty; times are unix seconds, 0 = never.
@@ -139,18 +163,13 @@ struct Shared {
     jwks_len: usize,
     last_ok: i64,
     last_attempt: i64,
+    attempt_uri_len: usize,
+    attempt_uri: [u8; URI_MAX_BYTES],
     jwks: [u8; JWKS_MAX_BYTES],
 }
 
 /// This backend's mapping of the segment; null until attached and the tranche is registered.
 static SEGMENT: AtomicPtr<Shared> = AtomicPtr::new(ptr::null_mut());
-
-/// Run `f`, turning a Postgres ERROR (or a panic) into `CacheError::Postgres`.
-fn guarded<R>(f: impl FnOnce() -> R) -> Result<R, CacheError> {
-    PgTryBuilder::new(AssertUnwindSafe(|| Ok(f())))
-        .catch_others(|_| Err(CacheError::Postgres))
-        .execute()
-}
 
 /// Take the lock, run `f`, and release the lock on every path.
 fn with_lock<R>(
@@ -160,11 +179,12 @@ fn with_lock<R>(
     let shared = segment()?;
     // SAFETY: `shared` points to the attached segment; no reference is created.
     let lock = unsafe { ptr::addr_of_mut!((*shared).lock) };
+    // Postgres ERRORs are not caught here: they must reach Postgres (via entry.rs) to abort the login.
     // SAFETY: `lock` was initialised by `init_shared`.
-    guarded(|| unsafe { pg_sys::LWLockAcquire(lock, mode) })?;
-    let out = guarded(|| f(shared)).and_then(|r| r);
+    unsafe { pg_sys::LWLockAcquire(lock, mode) };
+    let out = f(shared);
     // SAFETY: this backend acquired `lock` just above.
-    guarded(|| unsafe { pg_sys::LWLockRelease(lock) })?;
+    unsafe { pg_sys::LWLockRelease(lock) };
     out
 }
 
@@ -178,24 +198,22 @@ fn segment() -> Result<*mut Shared, CacheError> {
     let size = std::mem::size_of::<Shared>();
     // SAFETY: NAME is a static C string; `init` matches the callback type; `found` outlives the call.
     #[cfg(not(feature = "pg19"))]
-    let raw = guarded(|| unsafe {
-        pg_sys::GetNamedDSMSegment(NAME.as_ptr(), size, Some(init), &mut found)
-    })?;
+    let raw = unsafe { pg_sys::GetNamedDSMSegment(NAME.as_ptr(), size, Some(init), &mut found) };
     // SAFETY: as above; the extra init argument is unused.
     #[cfg(feature = "pg19")]
-    let raw = guarded(|| unsafe {
+    let raw = unsafe {
         pg_sys::GetNamedDSMSegment(NAME.as_ptr(), size, Some(init), &mut found, ptr::null_mut())
-    })?;
+    };
     let p = raw.cast::<Shared>();
     if p.is_null() {
-        return Err(CacheError::Postgres);
+        return Err(CacheError::NoSegment);
     }
     #[cfg(not(feature = "pg19"))]
     {
         // SAFETY: `p` is the attached segment, initialised before GetNamedDSMSegment returned.
         let id = unsafe { (*p).tranche_id };
         // SAFETY: NAME is static, as LWLockRegisterTranche requires.
-        guarded(|| unsafe { pg_sys::LWLockRegisterTranche(id, NAME.as_ptr()) })?;
+        unsafe { pg_sys::LWLockRegisterTranche(id, NAME.as_ptr()) };
     }
     SEGMENT.store(p, Ordering::Relaxed);
     Ok(p)
@@ -271,6 +289,7 @@ mod tests {
             uri: URI.into(),
             last_ok: Some(at(ok)),
             last_attempt: Some(at(attempt)),
+            attempt_uri: URI.into(),
         }
     }
 
@@ -281,7 +300,8 @@ mod tests {
 
     #[test]
     fn throttle_blocks_second_attempt() {
-        let s = Snapshot { last_attempt: Some(at(0)), ..Snapshot::default() };
+        let s =
+            Snapshot { last_attempt: Some(at(0)), attempt_uri: URI.into(), ..Snapshot::default() };
         assert_eq!(plan(&s, URI, false, at(30), &set()), Plan::Refuse);
         assert_eq!(plan(&s, URI, false, at(60), &set()), Plan::Fetch);
     }
@@ -308,8 +328,19 @@ mod tests {
         let s = cached(0, 0);
         let new = "https://other.example/jwks";
         assert_eq!(plan(&s, URI, false, at(10), &set()), Plan::UseCache);
-        assert_eq!(plan(&s, new, false, at(10), &set()), Plan::Refuse);
-        assert_eq!(plan(&s, new, false, at(60), &set()), Plan::Fetch);
+        // The attempt at t=0 was for the old URI, so it does not throttle the new one.
+        assert_eq!(plan(&s, new, false, at(10), &set()), Plan::Fetch);
+    }
+
+    #[test]
+    fn throttle_applies_to_new_uri_after_its_own_attempt() {
+        let new = "https://other.example/jwks";
+        let s = Snapshot { attempt_uri: new.into(), ..cached(0, 10) };
+        assert_eq!(plan(&s, new, false, at(20), &set()), Plan::Refuse);
+        assert_eq!(plan(&s, new, false, at(70), &set()), Plan::Fetch);
+        // The old URI's fresh keys stay usable; its fetches are no longer throttled by that attempt.
+        assert_eq!(plan(&s, URI, false, at(20), &set()), Plan::UseCache);
+        assert_eq!(plan(&s, URI, true, at(20), &set()), Plan::Fetch);
     }
 
     #[test]

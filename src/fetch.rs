@@ -27,10 +27,10 @@ pub enum FetchError {
 const MAX_REDIRECTS: u32 = 3;
 const WL_SOCKET_RW: u32 = pg_sys::WL_SOCKET_READABLE | pg_sys::WL_SOCKET_WRITEABLE;
 
-// libcurl option numbers (curl.h); the curl crate has no setter for these.
-const CURLOPT_PROTOCOLS: c_int = 181;
-const CURLOPT_REDIR_PROTOCOLS: c_int = 182;
-const CURLPROTO_HTTPS: c_long = 1 << 1;
+// libcurl option numbers (curl.h: CURLOPTTYPE_STRINGPOINT 10000 + 318/319); the curl crate has
+// no setter for these. They need libcurl >= 7.85; older libcurl rejects them and the fetch fails.
+const CURLOPT_PROTOCOLS_STR: c_int = 10318;
+const CURLOPT_REDIR_PROTOCOLS_STR: c_int = 10319;
 
 unsafe extern "C" {
     // Exported by libcurl, which the curl crate links. Returns a CURLcode (unsigned enum).
@@ -146,9 +146,10 @@ fn configure(easy: &mut Easy2<Collector>, uri: &str, timeout: Duration) -> Resul
     easy.max_redirections(MAX_REDIRECTS)?;
     easy.ssl_verify_peer(true)?;
     easy.ssl_verify_host(true)?;
-    for opt in [CURLOPT_PROTOCOLS, CURLOPT_REDIR_PROTOCOLS] {
-        // SAFETY: `raw()` is a live easy handle; both options take a long bitmask.
-        let rc = unsafe { curl_easy_setopt(easy.raw().cast(), opt, CURLPROTO_HTTPS) };
+    for opt in [CURLOPT_PROTOCOLS_STR, CURLOPT_REDIR_PROTOCOLS_STR] {
+        // SAFETY: `raw()` is a live easy handle; both options take a NUL-terminated string,
+        // which libcurl copies, and `c"https"` is static anyway.
+        let rc = unsafe { curl_easy_setopt(easy.raw().cast(), opt, c"https".as_ptr()) };
         if rc != 0 {
             return Err(curl::Error::new(rc));
         }
@@ -234,7 +235,7 @@ fn wait_many(fds: &[(Socket, u32)], ms: c_long) -> Vec<(Socket, u32)> {
 }
 
 /// Any ERROR/FATAL raised here propagates; curl handles are dropped on the way out.
-fn on_latch() {
+pub(crate) fn on_latch() {
     // SAFETY: MyLatch is this backend's own latch.
     unsafe { pg_sys::ResetLatch(pg_sys::MyLatch) };
     pgrx::check_for_interrupts!();
