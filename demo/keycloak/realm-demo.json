@@ -1,0 +1,166 @@
+{
+  "realm": "demo",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "users": [
+    {
+      "username": "alice",
+      "email": "alice@example.com",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Alice",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alice",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "bob",
+      "email": "bob@other.example",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Bob",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "bob",
+          "temporary": false
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "psql",
+      "name": "psql (device login)",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "attributes": {
+        "oauth2.device.authorization.grant.enabled": "true"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "email",
+        "profile",
+        "roles",
+        "web-origins",
+        "acr"
+      ],
+      "protocolMappers": [
+        {
+          "name": "audience-postgres",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "postgres",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "itest",
+      "name": "integration tests (test-only)",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "attributes": {
+        "oauth2.device.authorization.grant.enabled": "false"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "email",
+        "profile",
+        "roles",
+        "web-origins",
+        "acr"
+      ],
+      "protocolMappers": [
+        {
+          "name": "audience-postgres",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "postgres",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "components": {
+    "org.keycloak.keys.KeyProvider": [
+      {
+        "name": "itest-key",
+        "providerId": "rsa",
+        "subComponents": {},
+        "config": {
+          "privateKey": [
+            "-----BEGIN PRIVATE KEY-----\nMIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQDgf+kQP4e4sE2r\nySPJLe6vqbWvMbZXCA6Ut+6nQl8Im9fK7ESoXMZz34QUtUzKATivKl6/XFODoVu5\nKkpgM2MDBXgdoz02dKq/IVIHKf0qVFJ5QkTdSjAUGreXeeO3cKwVu7VkmmKBdcVr\nRP0jcss/9fGHqi9Z7Z02LUVc8qgs4nv+dwRwlKyu+G6vAwNtlj0S4XpsXTcOLz+N\nP1ZGr8rsjzGQzKND3RVpmvbJ8W/HL/+d5FqkXu+o6t0r+JSyqGRjk9tgdkhKEpED\n7hAnr1nHT98UkrC22BclUAxHLONO/2Q66TnAE+nt64TIkJLAwjoRRkZO+rWrjzqu\nwvvupQVRAgMBAAECggEAX9TKILj1zxVXOn7ka0LTsiGgIDZ4zwLt8nbnhXd0CME5\npvIfRr0/q4PcplhT/KDz2PYdttMLBVPySwLt983HtKj3grNFdILtxiPLl6pJWvHe\nuMtciRfbmSFkgGE0HwCWPLrBbj3m0bt7t9QduK2ObHGolhBEIT+ojdFaXBhrSKji\noya/1dYq3sKVn9d3orz6XH30XFC4HJxh3SgvvUTibdY54gwg+3BxW4fGHW7K7zeT\nGyylH+hxnNvk8a1MHmec165Z/SauOVA5Wj7jxyJC9xb3xIti7TK0YPd+cLQoQlDg\n/LchQFCD/tK8VawQQOq+Ep43WfOOYyTPWXRRgWl2zwKBgQD2p+zdoGETVGlV2qzy\nadj/VMoo1i3IMRwG1o/5XTa1BiqNAh5/sGOLtqbGmsmxfdkoqszD8xI9ant87+gk\nV2EtQKXm6ihJHEj5L/uFXomVYTj6/dO44Z+JMSMshnqFb8xgLLBoqiQ31DfrKbFN\nxVtEKDUyaKJ/4x7G+wUB0pD37wKBgQDpARzgbuaASR4qz8KKf+Wo3g6GrEUplqjD\n44Tq6AfVJ9RdGtpiFJbtgNConei0R6jyiFcnAqecIx/ObunRzWDRNiBR2etf3xvb\nmqR7ABIWXB/u7rknKjsyypTJmxci52kyAXlFaqOLQHsWZLp+KVESYnWdLfSb5nPJ\nmnrHKiqWvwKBgQChgwBFd5lZcPKwt0p8Sfc/6qOd7fF4nz+88o7AONtz2h/Oyc5y\nymvEtsuqTP05bjDewkjnHqmY8br+6pFWCqmlWinIdRgAF7dpBJRslqT83fbT05Xq\nAEPZMAXaSAy+h6CKcXjqcE7bB+m94UUqqcrDbJi4829E0tH6dbCnqtwmnQKBgQCL\nXG0HF42qIRF4DbeP2xtjuxz5E8RyMXhTYZu4XHuC1EXCQjNoAmSbPTaQA5KRcWLt\nXPqzjHTvgFqfv9r971b/Ct6d1jdfqjQhTwcdwlcPJJ686++2Kx4pLN19D9PwvnQ+\nwn7kM/oJadG0/R5GIzQoSNeL4VaygE20wT66LNA4RQKBgQDYCkUOA6apn65wXwni\nlriR1KUcgaOfFkH4uV3OX0KwZMmfuhXYJI0KdQa5IEokzBmQGgCtVbtbsTXZLhmn\n+Qn5oCaggSf0JbT6uOtqKUngEw1a0QFdDjFoe8pJpQmsFSJv79SK4X0+ivpSUTjZ\nzbaqWquigCTtwvPN56QjvLSsvg==\n-----END PRIVATE KEY-----\n"
+          ],
+          "priority": [
+            "1000"
+          ],
+          "algorithm": [
+            "RS256"
+          ],
+          "active": [
+            "true"
+          ],
+          "enabled": [
+            "true"
+          ],
+          "keyUse": [
+            "sig"
+          ]
+        }
+      },
+      {
+        "name": "hmac-generated",
+        "providerId": "hmac-generated",
+        "subComponents": {},
+        "config": {
+          "priority": [
+            "100"
+          ],
+          "algorithm": [
+            "HS512"
+          ]
+        }
+      },
+      {
+        "name": "aes-generated",
+        "providerId": "aes-generated",
+        "subComponents": {},
+        "config": {
+          "priority": [
+            "100"
+          ]
+        }
+      }
+    ]
+  }
+}

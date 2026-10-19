@@ -1,0 +1,6 @@
+.git
+target/
+.scratch/
+docs/superpowers/
+BRIEF.md
+demo/certs/

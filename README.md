@@ -35,6 +35,24 @@ psql ──token──▶ PostgreSQL ──validate──▶ pg-oauth-rs ──(
 4. It tells PostgreSQL who the user is (the `sub` claim by default).
 5. PostgreSQL decides which role that person may use, with an exact match or a `pg_ident.conf` map.
 
+## Quick start (demo)
+
+You need Docker. This starts Keycloak and PostgreSQL 18 with pg-oauth-rs, then logs you in as `alice`:
+
+```sh
+docker compose -f demo/compose.yaml up -d --build
+docker compose -f demo/compose.yaml run --rm psql \
+  "host=postgres dbname=postgres user=alice oauth_issuer=https://keycloak.localtest.me:8443/realms/demo oauth_client_id=psql"
+```
+
+1. `psql` prints a link and a code.
+2. Open the link in your browser and accept the certificate warning (the demo makes its own CA).
+3. Enter the code, log in as `alice` / `alice` (demo-only password), approve.
+4. `psql` connects as `alice`. No database password was used.
+
+If `keycloak.localtest.me` does not resolve, add `127.0.0.1 keycloak.localtest.me` to `/etc/hosts`.
+Details, accounts and reset steps: [demo/README.md](demo/README.md).
+
 ## Planned for v0.1
 
 - Verifies RS256 and ES256 JWT access tokens.

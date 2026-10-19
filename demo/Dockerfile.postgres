@@ -1,0 +1,45 @@
+# PostgreSQL 18 with pg-oauth-rs installed. Build context is the repo root:
+#   docker build -f demo/Dockerfile.postgres .
+# Both stages use the same base tag, so the module is built against this server's own headers.
+
+FROM postgres:18.6-trixie AS builder
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        build-essential pkg-config clang libclang-dev curl ca-certificates \
+        "postgresql-server-dev-${PG_MAJOR}=${PG_VERSION}" \
+        libcurl4-openssl-dev libssl-dev; \
+    rm -rf /var/lib/apt/lists/*
+
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH \
+    PG_CONFIG=/usr/lib/postgresql/18/bin/pg_config
+
+WORKDIR /src
+
+# Toolchain and cargo-pgrx first, so source edits do not redo them.
+COPY rust-toolchain.toml ./
+RUN set -eux; \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --profile minimal --default-toolchain none; \
+    rustup toolchain install; \
+    cargo install cargo-pgrx --version 0.19.3 --locked; \
+    cargo pgrx init --pg18 "$PG_CONFIG"
+
+COPY . .
+RUN cargo pgrx package --features pg18 --pg-config "$PG_CONFIG" --out-dir /pkg
+
+FROM postgres:18.6-trixie
+
+# libcurl4t64: the module's JWKS fetch. libpq-oauth: libpq's device-flow client (dlopen'ed by
+# libpq 18), so `psql` in this image can log in with OAuth. It must match libpq5's exact version.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates libcurl4t64 \
+        "libpq-oauth=$(dpkg-query -W -f='${Version}' libpq5)"; \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /pkg/ /
