@@ -227,9 +227,19 @@ fn provider_typo_is_refused_by_postgres() {
     ])
     .expect_err("a provider typo should be refused");
     assert!(err.contains("invalid value for parameter"), "unexpected error: {err}");
-    // Never written: a fresh session still does not know the setting.
-    let unset = stack::admin_sql("SELECT current_setting('pg_oauth_rs.provider', true) IS NULL");
-    assert_eq!(unset.as_deref(), Some("t"));
+    // Never written: a fresh session sees no value (an earlier test's RESET may leave an empty
+    // placeholder), and certainly not the typo.
+    let value =
+        stack::admin_sql("SELECT coalesce(current_setting('pg_oauth_rs.provider', true), '')");
+    assert_eq!(value.as_deref(), Some(""));
+}
+
+#[test]
+fn provider_typo_in_config_refuses_login() {
+    stack::start();
+    // The admin session has not loaded the module, so Postgres stores the typo unchecked.
+    let _provider = stack::guc(PROVIDER_SETTING, "entraid");
+    refused("alice", &tokens::alice(), "pg_oauth_rs.provider has an unknown value");
 }
 
 #[test]

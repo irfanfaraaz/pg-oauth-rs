@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `pg_oauth_rs.provider` presets for Entra ID, Okta and Keycloak (JWKS URL and identity claim from the
-  issuer; Entra tenant check).
+  issuer; Entra tenant check). An unknown `pg_oauth_rs.provider` value refuses every login.
 
 ### Changed
 

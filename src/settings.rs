@@ -1,9 +1,11 @@
 //! The `pg_oauth_rs.*` GUC settings.
 
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use pgrx::guc::{GucContext, GucFlags, GucRegistry, GucSetting, PostgresGucEnum};
+use pgrx::pg_sys;
 
 use crate::provider::Provider;
 
@@ -19,6 +21,8 @@ static JWKS_REFETCH_INTERVAL: GucSetting<i32> = GucSetting::<i32>::new(60);
 static JWKS_MAX_AGE: GucSetting<i32> = GucSetting::<i32>::new(3600);
 static JWKS_MAX_STALE: GucSetting<i32> = GucSetting::<i32>::new(86400);
 static PROVIDER: GucSetting<ProviderGuc> = GucSetting::<ProviderGuc>::new(ProviderGuc::Generic);
+/// The config files gave `pg_oauth_rs.provider` a value that is not a preset.
+static PROVIDER_UNKNOWN: AtomicBool = AtomicBool::new(false);
 
 /// `pg_oauth_rs.provider` values, as Postgres shows them.
 #[derive(PostgresGucEnum, Clone, Copy, PartialEq, Eq, Debug)]
@@ -45,11 +49,18 @@ pub struct Settings {
     pub max_age: Duration,
     pub max_stale: Duration,
     pub provider: Provider,
+    pub provider_unknown: bool,
+}
+
+/// Whether a raw `pg_oauth_rs.provider` value names a preset. Empty counts as not set.
+fn provider_value_known(raw: &str) -> bool {
+    raw.is_empty()
+        || ["generic", "entra", "okta", "keycloak"].iter().any(|l| raw.eq_ignore_ascii_case(l))
 }
 
 fn string_guc(
-    name: &'static std::ffi::CStr,
-    short: &'static std::ffi::CStr,
+    name: &'static CStr,
+    short: &'static CStr,
     setting: &'static GucSetting<Option<CString>>,
 ) {
     GucRegistry::define_string_guc(
@@ -63,8 +74,8 @@ fn string_guc(
 }
 
 fn secs_guc(
-    name: &'static std::ffi::CStr,
-    short: &'static std::ffi::CStr,
+    name: &'static CStr,
+    short: &'static CStr,
     setting: &'static GucSetting<i32>,
     min: i32,
 ) {
@@ -126,6 +137,16 @@ pub fn register() {
         &JWKS_MAX_STALE,
         0,
     );
+    // Postgres replaces an unknown value with the default when the enum is defined, so read
+    // the unchecked placeholder from the config files first.
+    // SAFETY: the name is a valid C string; with missing_ok the result is NULL or a valid
+    // C string owned by the GUC machinery, copied before anything can change it.
+    let raw = unsafe { pg_sys::GetConfigOption(c"pg_oauth_rs.provider".as_ptr(), true, false) };
+    if !raw.is_null() {
+        // SAFETY: non-NULL result of GetConfigOption, a NUL-terminated string.
+        let raw = unsafe { CStr::from_ptr(raw) }.to_string_lossy();
+        PROVIDER_UNKNOWN.store(!provider_value_known(&raw), Ordering::Relaxed);
+    }
     GucRegistry::define_enum_guc(
         c"pg_oauth_rs.provider",
         c"Identity provider preset: generic, entra, okta or keycloak.",
@@ -160,5 +181,25 @@ pub fn current() -> Settings {
             ProviderGuc::Okta => Provider::Okta,
             ProviderGuc::Keycloak => Provider::Keycloak,
         },
+        provider_unknown: PROVIDER_UNKNOWN.load(Ordering::Relaxed),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::provider_value_known;
+
+    #[test]
+    fn known_provider_values() {
+        for v in ["", "generic", "entra", "okta", "keycloak", "ENTRA"] {
+            assert!(provider_value_known(v), "{v:?}");
+        }
+    }
+
+    #[test]
+    fn unknown_provider_values() {
+        for v in ["entraid", "azure", " entra"] {
+            assert!(!provider_value_known(v), "{v:?}");
+        }
     }
 }

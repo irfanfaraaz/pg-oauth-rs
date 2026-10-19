@@ -33,7 +33,7 @@ psql ──token──▶ PostgreSQL ──validate──▶ pg-oauth-rs ──(
 1. `psql` (libpq 18) gets an access token from your IdP with the device-code flow.
 2. PostgreSQL passes the token to pg-oauth-rs.
 3. pg-oauth-rs checks the signature against the IdP's public keys (JWKS), then checks issuer, audience and expiry.
-4. It tells PostgreSQL who the user is (the `sub` claim by default).
+4. It tells PostgreSQL who the user is (the `sub` claim by default, `oid` for Entra ID).
 5. PostgreSQL decides which role that person may use, with an exact match or a `pg_ident.conf` map.
 
 ## Quick start (demo)
@@ -134,9 +134,10 @@ With `generic` (the default), nothing changes: `jwks_uri` is required and the id
 `audience` is required for every provider. See [Providers](#providers).
 
 pg-oauth-rs is loaded only when someone logs in, so Postgres cannot check `pg_oauth_rs.provider` at reload.
-If you misspell it, Postgres logs a WARNING (`invalid value for parameter "pg_oauth_rs.provider"`) at the
-next login and falls back to `generic`. After you change it, look at the server log. To check it yourself,
-run this as a superuser:
+If you misspell it, every login is refused and logged as
+`pg_oauth_rs: not configured: pg_oauth_rs.provider has an unknown value; use generic, entra, okta or keycloak`,
+next to Postgres's own WARNING (`invalid value for parameter "pg_oauth_rs.provider"`). After you change it,
+look at the server log. To check it yourself, run this as a superuser:
 
 ```sql
 LOAD 'pg_oauth_rs';
@@ -173,6 +174,7 @@ pg_oauth_rs.audience = '<app-client-id>'
 host  all  all  0.0.0.0/0  oauth  issuer="https://login.microsoftonline.com/<tenant-id>/v2.0" scope="openid profile api://<app-id>/<scope>" map=oauth
 ```
 
+- `<tenant-id>` is the tenant ID, a GUID. The domain name (for example `contoso.onmicrosoft.com`) is refused.
 - The scope must include `profile`. Without it, Entra leaves `tid`, `oid` and `preferred_username` out of the token, and every login is refused.
 - `audience` is the app's client ID.
 - pg-oauth-rs checks that the token's `tid` is the tenant in the issuer.
@@ -218,8 +220,9 @@ host  all  all  0.0.0.0/0  oauth  issuer="https://<org>.okta.com/oauth2/default"
 ```
 
 - `audience` is your authorization server's audience. For `default`, it is `api://default`.
-- The identity is `sub`, which is the Okta login.
-- Okta does not send `email_verified` by default, so `identity_claim = 'email'` is refused.
+- The identity is `sub`, which is the Okta login. The risk: an Okta admin can change a user's login. If a
+  login is later reused, the new owner gets the old person's database role.
+- Okta access tokens usually carry no `email` claim, so `identity_claim = 'email'` does not work with Okta.
 
 ### Keycloak
 

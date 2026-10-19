@@ -34,7 +34,18 @@ const CLAIM_TRIES: usize = 3;
 
 /// Decide one login. Logs every non-Allow outcome exactly once; never logs the token.
 pub fn decide(token: &str, _role: &str) -> Decision {
+    const BOTH_SET: &str = "pg_oauth_rs.audience and pg_oauth_rs.jwks_uri must both be set";
     let mut set = settings::current();
+    if set.provider_unknown {
+        return error(
+            "not configured",
+            "pg_oauth_rs.provider has an unknown value; use generic, entra, okta or keycloak",
+        );
+    }
+    if set.audience.is_empty() {
+        return error("not configured", BOTH_SET);
+    }
+    // The HBA line is only valid during authentication: checks that can fail without it go first.
     let Some(issuer) = hba_issuer() else {
         return error("internal error", "no issuer on the matched pg_hba.conf line");
     };
@@ -42,11 +53,8 @@ pub fn decide(token: &str, _role: &str) -> Decision {
         Ok(tenant) => tenant,
         Err(detail) => return error("not configured", &detail),
     };
-    if set.audience.is_empty() || set.jwks_uri.is_empty() {
-        return error(
-            "not configured",
-            "pg_oauth_rs.audience and pg_oauth_rs.jwks_uri must both be set",
-        );
+    if set.jwks_uri.is_empty() {
+        return error("not configured", BOTH_SET);
     }
 
     let kid = match token::header_kid(token) {
@@ -267,7 +275,7 @@ mod tests {
 
     #[pg_test]
     fn decide_without_config_is_error() {
-        // audience and jwks_uri are empty by default, so this cannot be decided.
+        // audience is empty by default: Error, returned before the HBA line is read.
         assert!(matches!(decide("a.b.c", "alice"), Decision::Error));
     }
 
@@ -311,6 +319,7 @@ mod preset_tests {
             max_age: Duration::from_secs(3600),
             max_stale: Duration::from_secs(86400),
             provider,
+            provider_unknown: false,
         }
     }
 
