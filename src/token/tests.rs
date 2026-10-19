@@ -33,7 +33,13 @@ fn default_jwks() -> JwkSet {
 }
 
 fn cfg() -> CheckConfig<'static> {
-    CheckConfig { issuer: ISS, audience: AUD, identity_claim: "sub", leeway_secs: 60, entra_tenant: None }
+    CheckConfig {
+        issuer: ISS,
+        audience: AUD,
+        identity_claim: "sub",
+        leeway_secs: 60,
+        entra_tenant: None,
+    }
 }
 
 fn entra_cfg() -> CheckConfig<'static> {
@@ -372,7 +378,11 @@ fn entra_accepts_tid_other_case() {
 #[test]
 fn entra_rejects_wrong_tid() {
     let t = rs256(&with(claims(), "tid", json!("00000000-0000-0000-0000-000000000000")));
-    assert_claims(verify(&t, &default_jwks(), &entra_cfg()), "tenant (tid) mismatch", Some("alice"));
+    assert_claims(
+        verify(&t, &default_jwks(), &entra_cfg()),
+        "tenant (tid) mismatch",
+        Some("alice"),
+    );
 }
 
 #[test]

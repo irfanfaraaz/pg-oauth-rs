@@ -3,20 +3,35 @@
 use std::ffi::CString;
 use std::time::Duration;
 
-use pgrx::guc::{GucContext, GucFlags, GucRegistry, GucSetting};
+use pgrx::guc::{GucContext, GucFlags, GucRegistry, GucSetting, PostgresGucEnum};
+
+use crate::provider::Provider;
 
 /// One week, the cap for every time setting.
 const MAX_SECS: i32 = 604_800;
 
 static AUDIENCE: GucSetting<Option<CString>> = GucSetting::<Option<CString>>::new(None);
 static JWKS_URI: GucSetting<Option<CString>> = GucSetting::<Option<CString>>::new(None);
-static IDENTITY_CLAIM: GucSetting<Option<CString>> =
-    GucSetting::<Option<CString>>::new(Some(c"sub"));
+static IDENTITY_CLAIM: GucSetting<Option<CString>> = GucSetting::<Option<CString>>::new(None);
 static CLOCK_SKEW_LEEWAY: GucSetting<i32> = GucSetting::<i32>::new(60);
 static JWKS_TIMEOUT: GucSetting<i32> = GucSetting::<i32>::new(5);
 static JWKS_REFETCH_INTERVAL: GucSetting<i32> = GucSetting::<i32>::new(60);
 static JWKS_MAX_AGE: GucSetting<i32> = GucSetting::<i32>::new(3600);
 static JWKS_MAX_STALE: GucSetting<i32> = GucSetting::<i32>::new(86400);
+static PROVIDER: GucSetting<ProviderGuc> = GucSetting::<ProviderGuc>::new(ProviderGuc::Generic);
+
+/// `pg_oauth_rs.provider` values, as Postgres shows them.
+#[derive(PostgresGucEnum, Clone, Copy, PartialEq, Eq, Debug)]
+enum ProviderGuc {
+    #[name = c"generic"]
+    Generic,
+    #[name = c"entra"]
+    Entra,
+    #[name = c"okta"]
+    Okta,
+    #[name = c"keycloak"]
+    Keycloak,
+}
 
 /// Snapshot of all `pg_oauth_rs.*` settings.
 #[derive(Debug, Clone)]
@@ -29,6 +44,7 @@ pub struct Settings {
     pub refetch_interval: Duration,
     pub max_age: Duration,
     pub max_stale: Duration,
+    pub provider: Provider,
 }
 
 fn string_guc(
@@ -77,7 +93,7 @@ pub fn register() {
     );
     string_guc(
         c"pg_oauth_rs.identity_claim",
-        c"Token claim that holds the authenticated identity.",
+        c"Token claim that holds the authenticated identity; empty uses the provider's default.",
         &IDENTITY_CLAIM,
     );
     secs_guc(
@@ -110,6 +126,14 @@ pub fn register() {
         &JWKS_MAX_STALE,
         0,
     );
+    GucRegistry::define_enum_guc(
+        c"pg_oauth_rs.provider",
+        c"Identity provider preset: generic, entra, okta or keycloak.",
+        c"",
+        &PROVIDER,
+        GucContext::Sighup,
+        GucFlags::default(),
+    );
 }
 
 fn string_value(setting: &GucSetting<Option<CString>>, default: &str) -> String {
@@ -124,11 +148,17 @@ pub fn current() -> Settings {
     Settings {
         audience: string_value(&AUDIENCE, ""),
         jwks_uri: string_value(&JWKS_URI, ""),
-        identity_claim: string_value(&IDENTITY_CLAIM, "sub"),
+        identity_claim: string_value(&IDENTITY_CLAIM, ""),
         leeway: secs(&CLOCK_SKEW_LEEWAY),
         jwks_timeout: secs(&JWKS_TIMEOUT),
         refetch_interval: secs(&JWKS_REFETCH_INTERVAL),
         max_age: secs(&JWKS_MAX_AGE),
         max_stale: secs(&JWKS_MAX_STALE),
+        provider: match PROVIDER.get() {
+            ProviderGuc::Generic => Provider::Generic,
+            ProviderGuc::Entra => Provider::Entra,
+            ProviderGuc::Okta => Provider::Okta,
+            ProviderGuc::Keycloak => Provider::Keycloak,
+        },
     }
 }

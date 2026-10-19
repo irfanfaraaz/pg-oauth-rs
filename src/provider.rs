@@ -158,7 +158,10 @@ mod tests {
     #[test]
     fn entra_refuses_common() {
         for t in ["common", "organizations", "consumers"] {
-            assert!(is_err(Provider::Entra, &format!("https://login.microsoftonline.com/{t}/v2.0")));
+            assert!(is_err(
+                Provider::Entra,
+                &format!("https://login.microsoftonline.com/{t}/v2.0")
+            ));
         }
     }
 
@@ -213,8 +216,8 @@ mod tests {
 
     #[test]
     fn keycloak_builds_jwks_with_port() {
-        let r = resolve(Provider::Keycloak, "https://keycloak.localtest.me:8443/realms/demo")
-            .unwrap();
+        let r =
+            resolve(Provider::Keycloak, "https://keycloak.localtest.me:8443/realms/demo").unwrap();
         assert_eq!(
             r.jwks_uri.as_deref(),
             Some("https://keycloak.localtest.me:8443/realms/demo/protocol/openid-connect/certs")
