@@ -4,13 +4,14 @@
 //! Postgres's latch machinery so a cancel, terminate or postmaster death stops the fetch.
 
 use std::collections::BTreeMap;
-use std::ffi::{c_int, c_long, c_void};
+use std::ffi::{c_int, c_long, c_uint, c_void};
 use std::ptr;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use curl::easy::{Easy2, Handler, WriteError};
-use curl::multi::{Events, Multi, MultiError, Socket};
+use curl::multi::{Events, Multi, Socket};
+use curl::MultiError;
 use pgrx::pg_sys;
 
 #[derive(Debug)]
@@ -32,8 +33,8 @@ const CURLOPT_REDIR_PROTOCOLS: c_int = 182;
 const CURLPROTO_HTTPS: c_long = 1 << 1;
 
 unsafe extern "C" {
-    // Exported by libcurl, which the curl crate links.
-    fn curl_easy_setopt(handle: *mut c_void, option: c_int, ...) -> c_int;
+    // Exported by libcurl, which the curl crate links. Returns a CURLcode (unsigned enum).
+    fn curl_easy_setopt(handle: *mut c_void, option: c_int, ...) -> c_uint;
 }
 
 /// Sockets curl currently wants watched, with the WL_SOCKET_* bits it asked for.
@@ -169,12 +170,17 @@ fn wait_for(fds: &[(Socket, u32)], wait: Duration) -> Vec<(Socket, u32)> {
 fn wait_one(fd: Socket, want: u32, ms: c_long) -> Vec<(Socket, u32)> {
     let events = pg_sys::WL_LATCH_SET | pg_sys::WL_TIMEOUT | pg_sys::WL_EXIT_ON_PM_DEATH | want;
     // SAFETY: MyLatch is this backend's latch; `fd` is a socket curl owns, or invalid with no socket events.
-    let rc = unsafe { pg_sys::WaitLatchOrSocket(pg_sys::MyLatch, events as c_int, fd, ms, 0) } as u32;
+    let rc =
+        unsafe { pg_sys::WaitLatchOrSocket(pg_sys::MyLatch, events as c_int, fd, ms, 0) } as u32;
     if rc & pg_sys::WL_LATCH_SET != 0 {
         on_latch();
     }
     let got = rc & want;
-    if got != 0 { vec![(fd, got)] } else { Vec::new() }
+    if got != 0 {
+        vec![(fd, got)]
+    } else {
+        Vec::new()
+    }
 }
 
 /// curl can watch several sockets at once (e.g. IPv4 and IPv6 during connect).
@@ -188,9 +194,21 @@ fn wait_many(fds: &[(Socket, u32)], ms: c_long) -> Vec<(Socket, u32)> {
     // and the set is freed on return (or by CurrentResourceOwner, when set, if an ERROR escapes).
     let got = unsafe {
         let set = pg_sys::CreateWaitEventSet(pg_sys::CurrentResourceOwner, n);
-        pg_sys::AddWaitEventToSet(set, pg_sys::WL_LATCH_SET, pg_sys::PGINVALID_SOCKET, pg_sys::MyLatch, ptr::null_mut());
+        pg_sys::AddWaitEventToSet(
+            set,
+            pg_sys::WL_LATCH_SET,
+            pg_sys::PGINVALID_SOCKET,
+            pg_sys::MyLatch,
+            ptr::null_mut(),
+        );
         if pg_sys::IsUnderPostmaster {
-            pg_sys::AddWaitEventToSet(set, pg_sys::WL_EXIT_ON_PM_DEATH, pg_sys::PGINVALID_SOCKET, ptr::null_mut(), ptr::null_mut());
+            pg_sys::AddWaitEventToSet(
+                set,
+                pg_sys::WL_EXIT_ON_PM_DEATH,
+                pg_sys::PGINVALID_SOCKET,
+                ptr::null_mut(),
+                ptr::null_mut(),
+            );
         }
         for &(fd, want) in fds {
             pg_sys::AddWaitEventToSet(set, want, fd, ptr::null_mut(), ptr::null_mut());

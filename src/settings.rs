@@ -113,9 +113,7 @@ pub fn register() {
 }
 
 fn string_value(setting: &GucSetting<Option<CString>>, default: &str) -> String {
-    setting
-        .get()
-        .map_or_else(|| default.to_owned(), |c| c.to_string_lossy().into_owned())
+    setting.get().map_or_else(|| default.to_owned(), |c| c.to_string_lossy().into_owned())
 }
 
 fn secs(setting: &GucSetting<i32>) -> Duration {

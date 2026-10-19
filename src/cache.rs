@@ -86,14 +86,7 @@ pub fn read() -> Result<Snapshot, CacheError> {
         // SAFETY: `p` is the attached segment and we hold its lock in shared mode. Only the
         // lock-protected fields are borrowed, never the lock itself.
         let (uri, uri_len, jwks, jwks_len, last_ok, last_attempt) = unsafe {
-            (
-                &(*p).uri,
-                (*p).uri_len,
-                &(*p).jwks,
-                (*p).jwks_len,
-                (*p).last_ok,
-                (*p).last_attempt,
-            )
+            (&(*p).uri, (*p).uri_len, &(*p).jwks, (*p).jwks_len, (*p).last_ok, (*p).last_attempt)
         };
         let uri = uri.get(..uri_len).ok_or(CacheError::Corrupt)?;
         let jwks = jwks.get(..jwks_len).ok_or(CacheError::Corrupt)?;
@@ -238,8 +231,7 @@ unsafe fn init_shared(shared: *mut Shared) {
 }
 
 fn to_secs(t: SystemTime) -> i64 {
-    t.duration_since(UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+    t.duration_since(UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
 fn from_secs(s: i64) -> Option<SystemTime> {
@@ -250,12 +242,7 @@ fn from_secs(s: i64) -> Option<SystemTime> {
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic
-)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
 
@@ -294,10 +281,7 @@ mod tests {
 
     #[test]
     fn throttle_blocks_second_attempt() {
-        let s = Snapshot {
-            last_attempt: Some(at(0)),
-            ..Snapshot::default()
-        };
+        let s = Snapshot { last_attempt: Some(at(0)), ..Snapshot::default() };
         assert_eq!(plan(&s, URI, false, at(30), &set()), Plan::Refuse);
         assert_eq!(plan(&s, URI, false, at(60), &set()), Plan::Fetch);
     }

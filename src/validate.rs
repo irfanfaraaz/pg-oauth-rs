@@ -111,7 +111,8 @@ fn has_kid(keys: &JwkSet, kid: &str) -> bool {
 /// failed refresh when stale-but-usable cached keys were used instead.
 fn load_keys(kid: &str, set: &Settings) -> Result<(JwkSet, Option<String>), KeysError> {
     let now = SystemTime::now();
-    let snap = cache::read().map_err(|e| ("internal error", format!("cache read failed: {e:?}")))?;
+    let snap =
+        cache::read().map_err(|e| ("internal error", format!("cache read failed: {e:?}")))?;
     let cached = (snap.uri == set.jwks_uri)
         .then(|| serde_json::from_slice::<JwkSet>(&snap.jwks).ok())
         .flatten();
@@ -121,18 +122,18 @@ fn load_keys(kid: &str, set: &Settings) -> Result<(JwkSet, Option<String>), Keys
         Plan::UseCache | Plan::UseCacheNoFetch => cached
             .map(|k| (k, None))
             .ok_or(("internal error", "cached JWKS is not valid JSON".to_owned())),
-        Plan::Refuse => Err((
-            "no usable keys",
-            "no cached JWKS and a fetch is throttled".to_owned(),
-        )),
+        Plan::Refuse => {
+            Err(("no usable keys", "no cached JWKS and a fetch is throttled".to_owned()))
+        }
         Plan::Fetch => {
             // Record the attempt first so a failing IdP is not hammered by every backend.
             cache::note_attempt(now)
                 .map_err(|e| ("internal error", format!("cache write failed: {e:?}")))?;
             match fetch::fetch_jwks(&set.jwks_uri, set.jwks_timeout, cache::JWKS_MAX_BYTES) {
                 Ok(body) => {
-                    let keys = serde_json::from_slice::<JwkSet>(&body)
-                        .map_err(|_| ("internal error", "fetched JWKS is not valid JSON".to_owned()))?;
+                    let keys = serde_json::from_slice::<JwkSet>(&body).map_err(|_| {
+                        ("internal error", "fetched JWKS is not valid JSON".to_owned())
+                    })?;
                     cache::store_ok(&set.jwks_uri, &body, now)
                         .map_err(|e| ("internal error", format!("cache write failed: {e:?}")))?;
                     Ok((keys, None))
@@ -140,9 +141,9 @@ fn load_keys(kid: &str, set: &Settings) -> Result<(JwkSet, Option<String>), Keys
                 Err(e) => {
                     let msg = format!("jwks fetch failed: {e:?}");
                     // Same rule as `cache::plan`: cached keys older than max_stale are not used.
-                    let usable = snap
-                        .last_ok
-                        .is_some_and(|t| now.duration_since(t).unwrap_or(Duration::ZERO) <= set.max_stale);
+                    let usable = snap.last_ok.is_some_and(|t| {
+                        now.duration_since(t).unwrap_or(Duration::ZERO) <= set.max_stale
+                    });
                     match cached {
                         Some(keys) if usable => Ok((keys, Some(msg))),
                         _ => Err(("no usable keys", msg)),
@@ -154,10 +155,9 @@ fn load_keys(kid: &str, set: &Settings) -> Result<(JwkSet, Option<String>), Keys
 }
 
 #[cfg(any(test, feature = "pg_test"))]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 #[pgrx::pg_schema]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
-
     use pgrx::prelude::*;
 
     use super::{decide, Decision};
