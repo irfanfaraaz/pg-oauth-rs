@@ -1,5 +1,5 @@
 # cargo-deny: https://embarkstudios.github.io/cargo-deny/
-# The crate itself is MIT OR Apache-2.0; every dependency must be under one of these.
+# The crate itself is Apache-2.0; every dependency must be under one of the licenses below.
 [graph]
 all-features = true
 
