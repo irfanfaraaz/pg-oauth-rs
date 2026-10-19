@@ -35,8 +35,13 @@ pub fn start() {
 
 /// Run one statement as the superuser over a password connection.
 pub fn admin_sql(sql: &str) -> Option<String> {
+    try_admin_sql(sql).unwrap_or_else(|e| panic!("{sql}: {e}"))
+}
+
+/// Like `admin_sql`, but a failed statement comes back as the error text.
+pub fn try_admin_sql(sql: &str) -> Result<Option<String>, String> {
     let conn = libpq::connect(ADMIN_CONNINFO).expect("superuser password login");
-    conn.query(sql).unwrap_or_else(|e| panic!("{sql}: {e}"))
+    conn.query(sql)
 }
 
 /// `ALTER SYSTEM SET` plus reload. Names and values come from the tests, never from outside.
