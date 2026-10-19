@@ -30,7 +30,8 @@ pg-oauth-rs is pre-alpha. Fixes go to `main` and ship in the next release of the
 
 | Version | Supported |
 |---------|-----------|
-| 0.1.x   | Yes       |
+| 0.2.x   | Yes       |
+| 0.1.x   | No        |
 | `main`  | Yes       |
 
 ## In scope

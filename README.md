@@ -8,7 +8,7 @@ pg-oauth-rs is an **OAuth token validator module for PostgreSQL 18**, written in
 ![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange.svg)
 ![PostgreSQL 18](https://img.shields.io/badge/PostgreSQL-18-336791.svg)
 
-> **Status: pre-alpha.** v0.1.0 is released and tested end to end against Keycloak. It has not been used
+> **Status: pre-alpha.** v0.2.0 is released and tested end to end against Keycloak. It has not been used
 > in production yet.
 
 ## Why
@@ -61,7 +61,7 @@ You need PostgreSQL 18. Pick one:
 - **Docker image:** PostgreSQL 18 with the module already installed, for `linux/amd64` and `linux/arm64`.
 
   ```sh
-  docker pull ghcr.io/irfanfaraaz/pg-oauth-rs:0.1.0
+  docker pull ghcr.io/irfanfaraaz/pg-oauth-rs:0.2.0
   ```
 
 - **Tarball** for Debian 12+ or Ubuntu 24.04+ with the PGDG `postgresql-18` package. Download it from
@@ -69,8 +69,8 @@ You need PostgreSQL 18. Pick one:
 
   ```sh
   sha256sum -c --ignore-missing SHA256SUMS
-  gh attestation verify pg_oauth_rs-0.1.0-pg18-linux-amd64.tar.gz --repo irfanfaraaz/pg-oauth-rs
-  sudo tar -C / -xzf pg_oauth_rs-0.1.0-pg18-linux-amd64.tar.gz
+  gh attestation verify pg_oauth_rs-0.2.0-pg18-linux-amd64.tar.gz --repo irfanfaraaz/pg-oauth-rs
+  sudo tar -C / -xzf pg_oauth_rs-0.2.0-pg18-linux-amd64.tar.gz
   ```
 
   The module needs libcurl (`libcurl4` or `libcurl4t64`). Then set it up as in [Configuration](#configuration)
