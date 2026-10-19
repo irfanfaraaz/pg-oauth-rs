@@ -1,0 +1,6 @@
+comment = 'pg_oauth_rs: OAuth validator module for PostgreSQL 18, created by pgrx'
+default_version = '@CARGO_VERSION@'
+module_pathname = 'pg_oauth_rs'
+relocatable = false
+superuser = true
+trusted = false
