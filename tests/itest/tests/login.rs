@@ -219,9 +219,17 @@ fn okta_preset_with_keycloak_issuer_not_configured() {
 #[test]
 fn provider_typo_is_refused_by_postgres() {
     stack::start();
-    let result = stack::try_admin_sql("ALTER SYSTEM SET pg_oauth_rs.provider = 'entraid'");
-    assert!(result.is_err(), "a provider typo should be refused, got {result:?}");
-    assert_eq!(stack::admin_sql("SHOW pg_oauth_rs.provider").as_deref(), Some("generic"));
+    // The module is not preloaded, so LOAD registers the enum setting in this session; without it
+    // Postgres would accept any value as a placeholder.
+    let err = stack::try_admin_sql_in_one_session(&[
+        "LOAD 'pg_oauth_rs'",
+        "ALTER SYSTEM SET pg_oauth_rs.provider = 'entraid'",
+    ])
+    .expect_err("a provider typo should be refused");
+    assert!(err.contains("invalid value for parameter"), "unexpected error: {err}");
+    // Never written: a fresh session still does not know the setting.
+    let unset = stack::admin_sql("SELECT current_setting('pg_oauth_rs.provider', true) IS NULL");
+    assert_eq!(unset.as_deref(), Some("t"));
 }
 
 #[test]
