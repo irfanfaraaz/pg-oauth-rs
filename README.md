@@ -263,6 +263,22 @@ Google may come back if opaque-token support lands and a safe client flow exists
 - GUI tools (DBeaver, pgAdmin) do not support PostgreSQL OAuth yet.
 - libpq's built-in device flow does not work on Windows.
 
+## Compared with other validators
+
+Other PostgreSQL 18 validator modules exist. The table compares their public repositories as of
+2026-10-20; corrections are welcome in an issue.
+
+| | pg-oauth-rs | [pg_oidc_validator](https://github.com/percona/pg_oidc_validator) (Percona) | [oidc_validator](https://github.com/UnAfraid/pg_oidc_validator_rust) |
+|---|---|---|---|
+| Language | Rust (pgrx) | C++ | Rust |
+| License | Apache-2.0 | Apache-2.0 | None stated |
+| Token audience (`aud`) check | Required | Checks scopes instead | Optional |
+| Signing keys (JWKS) cached in shared memory | Yes, with stale-key fallback | Yes (HTTP cache) | No |
+| Settings | `postgresql.conf` | `postgresql.conf` | Environment variables |
+| Provider presets | Entra ID, Okta, Keycloak | Entra ID scope handling | None |
+| Tests | Unit, pgrx and 24 real-login tests against Keycloak in CI | Device-flow suite against Keycloak | None in the repository |
+| Downloads | Linux tarballs (amd64, arm64) and a multi-arch Docker image, with checksums and signed build provenance | Debian/Ubuntu and RPM packages | Build from source |
+
 ## Roadmap
 
 - Token introspection for opaque tokens (RFC 7662), and Google if a safe client flow exists.
@@ -270,7 +286,7 @@ Google may come back if opaque-token support lands and a safe client flow exists
 - PostgreSQL 19 support (log-only failure details, per-line `pg_hba.conf` options).
 - Machine logins for scripts and CI.
 - Provider presets for Auth0.
-- Packages: GitHub Releases, PGXN, Debian/RPM, Docker image.
+- Packages: PGXN and Debian/RPM. (GitHub Releases and the Docker image ship since 0.1.0.)
 
 ## Security
 
