@@ -8,6 +8,8 @@ pg-oauth-rs is an **OAuth token validator module for PostgreSQL 18**, written in
 ![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange.svg)
 ![PostgreSQL 18](https://img.shields.io/badge/PostgreSQL-18-336791.svg)
 
+https://github.com/user-attachments/assets/19f32eb9-3aeb-4508-9a69-436cebcd7a88
+
 > **Status: pre-alpha.** v0.2.0 is released and tested end to end against Keycloak. It has not been used
 > in production yet.
 
