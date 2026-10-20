@@ -1,5 +1,6 @@
 # Rust / pgrx build output
 /target/
+/tests/itest/target/
 **/*.rs.bk
 
 # Editors and OS
