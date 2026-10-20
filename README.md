@@ -78,7 +78,7 @@ You need PostgreSQL 18. Pick one:
 
 - **From source:** see [CONTRIBUTING.md](CONTRIBUTING.md#development-setup).
 
-## What v0.1 does
+## Features
 
 - Verifies RS256 and ES256 JWT access tokens.
 - Checks `iss`, `aud`, `exp` and `nbf`, with 60 s clock leeway.
@@ -86,8 +86,9 @@ You need PostgreSQL 18. Pick one:
 - Fetches keys over HTTPS only, with a timeout, and never blocks a cancel or shutdown.
 - Fails closed: any error means "no".
 - Never writes a token to the log.
+- Provider presets for Entra ID, Okta and Keycloak (`pg_oauth_rs.provider`). See [Providers](#providers).
 - One-command Docker Compose demo with Keycloak.
-- 20 end-to-end login tests against the demo, run in CI on every pull request.
+- 24 end-to-end login tests against the demo, run in CI on every pull request.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
